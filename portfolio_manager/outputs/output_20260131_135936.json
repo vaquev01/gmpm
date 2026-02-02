@@ -1,0 +1,375 @@
+{
+  "timestamp": "2026-01-31T13:59:36.138928",
+  "valid_until": "2026-02-01T01:59:36.138928",
+  "system_state": "RUNNING",
+  "regime": "UNCERTAIN",
+  "regime_confidence": 50,
+  "scenario": "UNCERTAIN",
+  "scenario_probability": 50,
+  "thesis": "Regime: UNCERTAIN. Scenario: UNCERTAIN. Exercise appropriate caution.",
+  "signals": [
+    {
+      "symbol": "MU",
+      "direction": "LONG",
+      "score": 66.32988749285357,
+      "confidence": "MODERATE",
+      "entry_price": 414.8800048828125,
+      "stop_loss": 398.2848,
+      "take_profit_1": 439.77281,
+      "take_profit_2": 456.36801,
+      "position_size": 79.94,
+      "risk_r": 0.02,
+      "rationale": "LONG MU: Flow Positioning strong, Technical Structure strong",
+      "key_drivers": [
+        "flow_positioning: 88/100",
+        "technical_structure: 87/100",
+        "trend_quality: 81/100"
+      ],
+      "valid_hours": 24
+    },
+    {
+      "symbol": "TXN",
+      "direction": "LONG",
+      "score": 64.71470406622812,
+      "confidence": "MODERATE",
+      "entry_price": 215.5500030517578,
+      "stop_loss": 206.928,
+      "take_profit_1": 228.483,
+      "take_profit_2": 237.105,
+      "position_size": 150.12,
+      "risk_r": 0.02,
+      "rationale": "LONG TXN: Technical Structure strong, Momentum strong",
+      "key_drivers": [
+        "technical_structure: 85/100",
+        "momentum: 84/100",
+        "flow_positioning: 83/100"
+      ],
+      "valid_hours": 24
+    },
+    {
+      "symbol": "CSCO",
+      "direction": "LONG",
+      "score": 64.10944316740662,
+      "confidence": "MODERATE",
+      "entry_price": 78.31999969482422,
+      "stop_loss": 75.1872,
+      "take_profit_1": 83.0192,
+      "take_profit_2": 86.152,
+      "position_size": 409.28,
+      "risk_r": 0.02,
+      "rationale": "LONG CSCO: Technical Structure strong, Fractal Smc strong",
+      "key_drivers": [
+        "technical_structure: 88/100",
+        "fractal_smc: 75/100",
+        "trend_quality: 73/100"
+      ],
+      "valid_hours": 24
+    },
+    {
+      "symbol": "EFA",
+      "direction": "LONG",
+      "score": 63.5202595682565,
+      "confidence": "MODERATE",
+      "entry_price": 100.73999786376953,
+      "stop_loss": 96.7104,
+      "take_profit_1": 106.7844,
+      "take_profit_2": 110.814,
+      "position_size": 315.27,
+      "risk_r": 0.02,
+      "rationale": "LONG EFA: Flow Positioning strong, Technical Structure strong",
+      "key_drivers": [
+        "flow_positioning: 84/100",
+        "technical_structure: 83/100",
+        "fractal_smc: 76/100"
+      ],
+      "valid_hours": 24
+    },
+    {
+      "symbol": "VEA",
+      "direction": "LONG",
+      "score": 63.47999530131369,
+      "confidence": "MODERATE",
+      "entry_price": 66.19999694824219,
+      "stop_loss": 63.552,
+      "take_profit_1": 70.172,
+      "take_profit_2": 72.82,
+      "position_size": 479.46,
+      "risk_r": 0.02,
+      "rationale": "LONG VEA: Flow Positioning strong, Technical Structure strong",
+      "key_drivers": [
+        "flow_positioning: 86/100",
+        "technical_structure: 84/100",
+        "trend_quality: 74/100"
+      ],
+      "valid_hours": 24
+    },
+    {
+      "symbol": "META",
+      "direction": "LONG",
+      "score": 63.38365241344758,
+      "confidence": "MODERATE",
+      "entry_price": 716.5,
+      "stop_loss": 687.84,
+      "take_profit_1": 759.49,
+      "take_profit_2": 788.15,
+      "position_size": 44.23,
+      "risk_r": 0.02,
+      "rationale": "LONG META: Momentum strong, Flow Positioning strong",
+      "key_drivers": [
+        "momentum: 81/100",
+        "flow_positioning: 81/100",
+        "technical_structure: 80/100"
+      ],
+      "valid_hours": 24
+    },
+    {
+      "symbol": "NVDA",
+      "direction": "LONG",
+      "score": 62.97887517842236,
+      "confidence": "MODERATE",
+      "entry_price": 191.1300048828125,
+      "stop_loss": 183.4848,
+      "take_profit_1": 202.59781,
+      "take_profit_2": 210.24301,
+      "position_size": 164.75,
+      "risk_r": 0.02,
+      "rationale": "LONG NVDA: Technical Structure strong, Volatility strong",
+      "key_drivers": [
+        "technical_structure: 85/100",
+        "volatility: 80/100",
+        "fractal_smc: 76/100"
+      ],
+      "valid_hours": 24
+    },
+    {
+      "symbol": "EEM",
+      "direction": "LONG",
+      "score": 60.63621138814143,
+      "confidence": "MODERATE",
+      "entry_price": 59.099998474121094,
+      "stop_loss": 56.736,
+      "take_profit_1": 62.646,
+      "take_profit_2": 65.01,
+      "position_size": 513.0,
+      "risk_r": 0.02,
+      "rationale": "LONG EEM: Flow Positioning strong, Technical Structure strong",
+      "key_drivers": [
+        "flow_positioning: 81/100",
+        "technical_structure: 75/100",
+        "trend_quality: 67/100"
+      ],
+      "valid_hours": 24
+    },
+    {
+      "symbol": "VWO",
+      "direction": "LONG",
+      "score": 59.38337060945201,
+      "confidence": "MODERATE",
+      "entry_price": 56.470001220703125,
+      "stop_loss": 54.2112,
+      "take_profit_1": 59.8582,
+      "take_profit_2": 62.117,
+      "position_size": 525.8,
+      "risk_r": 0.02,
+      "rationale": "LONG VWO: Flow Positioning strong, Technical Structure strong",
+      "key_drivers": [
+        "flow_positioning: 80/100",
+        "technical_structure: 72/100",
+        "fractal_smc: 67/100"
+      ],
+      "valid_hours": 24
+    },
+    {
+      "symbol": "GOOGL",
+      "direction": "LONG",
+      "score": 58.96873177545563,
+      "confidence": "MODERATE",
+      "entry_price": 338.0,
+      "stop_loss": 324.48,
+      "take_profit_1": 358.28,
+      "take_profit_2": 371.8,
+      "position_size": 87.23,
+      "risk_r": 0.02,
+      "rationale": "LONG GOOGL: Technical Structure strong, Fractal Smc strong",
+      "key_drivers": [
+        "technical_structure: 87/100",
+        "fractal_smc: 76/100",
+        "trend_quality: 74/100"
+      ],
+      "valid_hours": 24
+    },
+    {
+      "symbol": "SPY",
+      "direction": "LONG",
+      "score": 58.00519364837983,
+      "confidence": "MODERATE",
+      "entry_price": 691.969970703125,
+      "stop_loss": 664.29117,
+      "take_profit_1": 733.48817,
+      "take_profit_2": 761.16697,
+      "position_size": 41.91,
+      "risk_r": 0.02,
+      "rationale": "LONG SPY: Volatility strong, Fractal Smc strong",
+      "key_drivers": [
+        "volatility: 80/100",
+        "fractal_smc: 73/100",
+        "trend_quality: 72/100"
+      ],
+      "valid_hours": 24
+    },
+    {
+      "symbol": "IBM",
+      "direction": "SHORT",
+      "score": 57.99181413265126,
+      "confidence": "MODERATE",
+      "entry_price": 306.70001220703125,
+      "stop_loss": 318.96801,
+      "take_profit_1": 288.29801,
+      "take_profit_2": 276.03001,
+      "position_size": 94.54,
+      "risk_r": 0.02,
+      "rationale": "SHORT IBM: Fractal Smc strong, Technical Structure strong",
+      "key_drivers": [
+        "fractal_smc: 79/100",
+        "technical_structure: 77/100",
+        "flow_positioning: 76/100"
+      ],
+      "valid_hours": 24
+    },
+    {
+      "symbol": "AMD",
+      "direction": "LONG",
+      "score": 57.69424789105797,
+      "confidence": "MODERATE",
+      "entry_price": 236.72999572753906,
+      "stop_loss": 227.2608,
+      "take_profit_1": 250.9338,
+      "take_profit_2": 260.403,
+      "position_size": 121.86,
+      "risk_r": 0.02,
+      "rationale": "LONG AMD: Technical Structure strong, Trend Quality strong",
+      "key_drivers": [
+        "technical_structure: 75/100",
+        "trend_quality: 74/100",
+        "fractal_smc: 64/100"
+      ],
+      "valid_hours": 24
+    },
+    {
+      "symbol": "QQQ",
+      "direction": "LONG",
+      "score": 57.36031065667264,
+      "confidence": "MODERATE",
+      "entry_price": 621.8699951171875,
+      "stop_loss": 596.9952,
+      "take_profit_1": 659.18219,
+      "take_profit_2": 684.05699,
+      "position_size": 46.12,
+      "risk_r": 0.02,
+      "rationale": "LONG QQQ: Volatility strong, Technical Structure strong",
+      "key_drivers": [
+        "volatility: 80/100",
+        "technical_structure: 68/100",
+        "fractal_smc: 68/100"
+      ],
+      "valid_hours": 24
+    },
+    {
+      "symbol": "AMAT",
+      "direction": "LONG",
+      "score": 57.0314288601725,
+      "confidence": "MODERATE",
+      "entry_price": 322.32000732421875,
+      "stop_loss": 309.42721,
+      "take_profit_1": 341.65921,
+      "take_profit_2": 354.55201,
+      "position_size": 88.47,
+      "risk_r": 0.02,
+      "rationale": "LONG AMAT: Technical Structure strong, Fractal Smc strong",
+      "key_drivers": [
+        "technical_structure: 77/100",
+        "fractal_smc: 73/100",
+        "trend_quality: 73/100"
+      ],
+      "valid_hours": 24
+    },
+    {
+      "symbol": "VOO",
+      "direction": "LONG",
+      "score": 56.18620881487252,
+      "confidence": "MODERATE",
+      "entry_price": 636.219970703125,
+      "stop_loss": 610.77117,
+      "take_profit_1": 674.39317,
+      "take_profit_2": 699.84197,
+      "position_size": 44.16,
+      "risk_r": 0.02,
+      "rationale": "LONG VOO: Volatility strong, Fractal Smc strong",
+      "key_drivers": [
+        "volatility: 80/100",
+        "fractal_smc: 73/100",
+        "trend_quality: 64/100"
+      ],
+      "valid_hours": 24
+    },
+    {
+      "symbol": "AMZN",
+      "direction": "SHORT",
+      "score": 55.571875268372544,
+      "confidence": "MODERATE",
+      "entry_price": 239.3000030517578,
+      "stop_loss": 248.872,
+      "take_profit_1": 224.942,
+      "take_profit_2": 215.37,
+      "position_size": 116.11,
+      "risk_r": 0.02,
+      "rationale": "SHORT AMZN: Volatility strong, Fractal Smc strong",
+      "key_drivers": [
+        "volatility: 80/100",
+        "fractal_smc: 73/100",
+        "technical_structure: 69/100"
+      ],
+      "valid_hours": 24
+    },
+    {
+      "symbol": "IWM",
+      "direction": "SHORT",
+      "score": 55.293798774376164,
+      "confidence": "MODERATE",
+      "entry_price": 259.6499938964844,
+      "stop_loss": 270.03599,
+      "take_profit_1": 244.07099,
+      "take_profit_2": 233.68499,
+      "position_size": 106.48,
+      "risk_r": 0.02,
+      "rationale": "SHORT IWM: Volatility strong, Flow Positioning strong",
+      "key_drivers": [
+        "volatility: 80/100",
+        "flow_positioning: 77/100",
+        "fractal_smc: 67/100"
+      ],
+      "valid_hours": 24
+    }
+  ],
+  "executive_summary": "18 opportunities identified (15 long, 3 short). Avg score: 60. Regime: UNCERTAIN. Scenario: UNCERTAIN.",
+  "one_liners": [
+    "MU: LON 414.8800\u2192439.7728/456.3680 | SL 398.2848 | 79.94L | S:66 | 24h",
+    "TXN: LON 215.5500\u2192228.4830/237.1050 | SL 206.9280 | 150.12L | S:65 | 24h",
+    "CSCO: LON 78.3200\u219283.0192/86.1520 | SL 75.1872 | 409.28L | S:64 | 24h",
+    "EFA: LON 100.7400\u2192106.7844/110.8140 | SL 96.7104 | 315.27L | S:64 | 24h",
+    "VEA: LON 66.2000\u219270.1720/72.8200 | SL 63.5520 | 479.46L | S:63 | 24h",
+    "META: LON 716.5000\u2192759.4900/788.1500 | SL 687.8400 | 44.23L | S:63 | 24h",
+    "NVDA: LON 191.1300\u2192202.5978/210.2430 | SL 183.4848 | 164.75L | S:63 | 24h",
+    "EEM: LON 59.1000\u219262.6460/65.0100 | SL 56.7360 | 513.00L | S:61 | 24h",
+    "VWO: LON 56.4700\u219259.8582/62.1170 | SL 54.2112 | 525.80L | S:59 | 24h",
+    "GOOGL: LON 338.0000\u2192358.2800/371.8000 | SL 324.4800 | 87.23L | S:59 | 24h",
+    "SPY: LON 691.9700\u2192733.4882/761.1670 | SL 664.2912 | 41.91L | S:58 | 24h",
+    "IBM: SHO 306.7000\u2192288.2980/276.0300 | SL 318.9680 | 94.54L | S:58 | 24h",
+    "AMD: LON 236.7300\u2192250.9338/260.4030 | SL 227.2608 | 121.86L | S:58 | 24h",
+    "QQQ: LON 621.8700\u2192659.1822/684.0570 | SL 596.9952 | 46.12L | S:57 | 24h",
+    "AMAT: LON 322.3200\u2192341.6592/354.5520 | SL 309.4272 | 88.47L | S:57 | 24h",
+    "VOO: LON 636.2200\u2192674.3932/699.8420 | SL 610.7712 | 44.16L | S:56 | 24h",
+    "AMZN: SHO 239.3000\u2192224.9420/215.3700 | SL 248.8720 | 116.11L | S:56 | 24h",
+    "IWM: SHO 259.6500\u2192244.0710/233.6850 | SL 270.0360 | 106.48L | S:55 | 24h"
+  ]
+}

@@ -1,0 +1,23 @@
+2026-01-31 13:59:15.965 | INFO     | __main__:__init__:46 - ============================================================
+2026-01-31 13:59:15.966 | INFO     | __main__:__init__:47 - Initializing Portfolio Manager System v8.1
+2026-01-31 13:59:15.966 | INFO     | __main__:__init__:48 - Total Assets: 278
+2026-01-31 13:59:15.966 | INFO     | __main__:__init__:49 - ============================================================
+2026-01-31 13:59:15.966 | INFO     | data.fetchers.base:__init__:18 - Initialized Yahoo Finance fetcher
+2026-01-31 13:59:15.966 | INFO     | data.fetchers.base:__init__:18 - Initialized Binance fetcher
+2026-01-31 13:59:15.966 | INFO     | data.fetchers.base:__init__:18 - Initialized FRED fetcher
+2026-01-31 13:59:15.966 | INFO     | features.calculator:__init__:82 - FeatureCalculator initialized
+2026-01-31 13:59:15.966 | INFO     | scoring.calculator:__init__:46 - ScoreCalculator initialized with regime: RISK_ON
+2026-01-31 13:59:15.966 | INFO     | analysis.regime:__init__:28 - RegimeDetector initialized
+2026-01-31 13:59:15.967 | INFO     | analysis.scenario:__init__:43 - ScenarioEngine initialized
+2026-01-31 13:59:15.967 | INFO     | output.generator:__init__:63 - OutputGenerator initialized
+2026-01-31 13:59:15.967 | INFO     | __main__:__init__:70 - System initialized successfully
+2026-01-31 13:59:15.967 | INFO     | __main__:run_cycle:102 - ------------------------------------------------------------
+2026-01-31 13:59:15.967 | INFO     | __main__:run_cycle:103 - Starting cycle at 2026-01-31 13:59:15.967395
+2026-01-31 13:59:15.967 | INFO     | __main__:fetch_market_data:74 - Fetching market data...
+2026-01-31 13:59:31.785 | INFO     | __main__:fetch_market_data:97 - Fetched data for 30 assets
+2026-01-31 13:59:31.785 | INFO     | __main__:run_cycle:120 - Regime: UNCERTAIN | Scenario: UNCERTAIN
+2026-01-31 13:59:31.785 | INFO     | __main__:run_cycle:126 - Calculating features...
+2026-01-31 13:59:36.136 | INFO     | features.calculator:calculate_batch:188 - Calculated features for 30 assets
+2026-01-31 13:59:36.136 | INFO     | __main__:run_cycle:130 - Calculating scores...
+2026-01-31 13:59:36.143 | INFO     | __main__:run_cycle:155 - Output saved to /Users/victorcastellovaqueiro/GMPM/portfolio_manager/outputs/output_20260131_135936.json
+2026-01-31 13:59:36.143 | INFO     | __main__:run_cycle:158 - Cycle complete: 18 opportunities found
