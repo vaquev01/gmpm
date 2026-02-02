@@ -1,10 +1,13 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
-import { Asset, FeatureCategory, ScoreComponent, Timeframe, FractalConcept, ViewType, MarketData, Signal, PortfolioConfig, IncubatorPortfolio, TrackedAsset } from '@/types';
+import { Asset, FeatureCategory, ScoreComponent, Timeframe, FractalConcept, ViewType, FactoryTab, MarketData, Signal, PortfolioConfig, IncubatorPortfolio, TrackedAsset } from '@/types';
 
 interface AppState {
     view: ViewType;
     setView: (view: ViewType) => void;
+
+    factoryTab: FactoryTab;
+    setFactoryTab: (tab: FactoryTab) => void;
 
     assetUniverse: Asset[];
     featureCategories: FeatureCategory[];
@@ -33,6 +36,9 @@ export const useStore = create<AppState>()(
         (set) => ({
             view: 'command',
             setView: (view) => set({ view }),
+
+            factoryTab: 'paper',
+            setFactoryTab: (tab) => set({ factoryTab: tab }),
 
             assetUniverse: [
                 { class: 'Forex', count: 28, examples: 'EUR/USD, GBP/JPY, USD/MXN...' },

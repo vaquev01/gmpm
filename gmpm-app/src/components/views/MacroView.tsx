@@ -7,24 +7,25 @@ import { Progress } from '@/components/ui/progress';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
     Globe, Activity, BarChart2, Brain, ShieldAlert, Users, DollarSign, Scale,
-    Droplets, Repeat, MessageSquare, Rocket, Factory, Newspaper, CheckCircle2, XCircle
+    Droplets, MessageSquare, Rocket, CheckCircle2, XCircle
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { analyzeInstitutionalMacro } from '@/lib/institutionalEngine';
 import { getLiquidityData } from '@/lib/liquidityEngine';
 import { getSocialSentiment } from '@/lib/sentimentEngine';
+import type { InstitutionalMatrix } from '@/lib/institutionalEngine';
 
 // --- TYPES ---
 interface MacroData {
     summary: {
-        gdp: { value: number; trend: string; lastUpdate: string };
-        inflation: { cpi: number; cpiYoY: number; trend: string };
-        employment: { unemploymentRate: number; nfp: number; trend: string };
-        rates: { fedFunds: number; treasury10y: number; yieldCurve: number; curveStatus: string };
-        credit: { aaaSpread: number; hySpread: number; condition: string };
-        sentiment: { consumerSentiment: number; condition: string };
+        gdp: { value: number | null; trend: string; lastUpdate: string };
+        inflation: { cpi: number | null; cpiYoY: number | null; trend: string };
+        employment: { unemploymentRate: number | null; nfp: number | null; trend: string };
+        rates: { fedFunds: number | null; treasury10y: number | null; yieldCurve: number | null; curveStatus: string };
+        credit: { aaaSpread: number | null; hySpread: number | null; condition: string };
+        sentiment: { consumerSentiment: number | null; condition: string };
     };
-    data?: any; // Raw FRED data
+    data?: unknown; // Raw FRED data
     timestamp: string;
 }
 
@@ -32,22 +33,29 @@ interface MacroData {
 const LiveTicker = ({ data }: { data: MacroData | null }) => {
     if (!data) return <div className="w-full bg-gray-900 border-y border-gray-800 py-2 h-8 animate-pulse" />;
 
+    const gdpVal = data.summary.gdp.value !== null ? `${data.summary.gdp.value}` : 'N/A';
+    const cpiVal = data.summary.inflation.cpi !== null ? `${data.summary.inflation.cpi}` : 'N/A';
+    const y10 = data.summary.rates.treasury10y !== null ? `${data.summary.rates.treasury10y}` : 'N/A';
+    const yc = data.summary.rates.yieldCurve !== null ? data.summary.rates.yieldCurve.toFixed(2) : 'N/A';
+    const um = data.summary.sentiment.consumerSentiment !== null ? `${data.summary.sentiment.consumerSentiment}` : 'N/A';
+    const hy = data.summary.credit.hySpread !== null ? data.summary.credit.hySpread.toFixed(2) : 'N/A';
+
     return (
         <div className="w-full bg-gray-900 border-y border-gray-800 py-2 overflow-hidden flex items-center relative gap-4">
             <div className="px-4 text-[10px] font-bold text-red-500 animate-pulse whitespace-nowrap z-10 bg-gray-900">LIVE FEED ●</div>
             <div className="flex gap-12 animate-[marquee_30s_linear_infinite] whitespace-nowrap text-xs text-gray-400 font-mono">
-                <span><span className="text-green-500">GROWTH:</span> Real GDP {data.summary.gdp.value}B ({data.summary.gdp.trend})</span>
-                <span><span className="text-blue-500">INFLATION:</span> CPI {data.summary.inflation.cpi} ({data.summary.inflation.trend})</span>
-                <span><span className="text-red-500">RATES:</span> 10Y Yield {data.summary.rates.treasury10y}% | Yield Curve: {data.summary.rates.yieldCurve.toFixed(2)}% ({data.summary.rates.curveStatus})</span>
-                <span><span className="text-yellow-500">SENTIMENT:</span> Consumer Conf: {data.summary.sentiment.consumerSentiment} ({data.summary.sentiment.condition})</span>
-                <span><span className="text-purple-500">CREDIT:</span> HY Spread {data.summary.credit.hySpread.toFixed(2)}% ({data.summary.credit.condition})</span>
+                <span><span className="text-green-500">GROWTH:</span> Real GDP {gdpVal}B ({data.summary.gdp.trend})</span>
+                <span><span className="text-blue-500">INFLATION:</span> CPI {cpiVal} ({data.summary.inflation.trend})</span>
+                <span><span className="text-red-500">RATES:</span> 10Y Yield {y10}% | Yield Curve: {yc}% ({data.summary.rates.curveStatus})</span>
+                <span><span className="text-yellow-500">SENTIMENT:</span> Consumer Conf: {um} ({data.summary.sentiment.condition})</span>
+                <span><span className="text-purple-500">CREDIT:</span> HY Spread {hy}% ({data.summary.credit.condition})</span>
             </div>
         </div>
     );
 };
 
 // --- HELPER: Derive Logic ---
-const deriveOracleConclusion = (data: MacroData | null, matrix: any) => {
+const deriveOracleConclusion = (data: MacroData | null, matrix: InstitutionalMatrix | null) => {
     if (!data || !matrix) return {
         headline: "INITIALIZING ORACLE...",
         summary: "Connecting to global macro feeds...",
@@ -68,7 +76,16 @@ const deriveOracleConclusion = (data: MacroData | null, matrix: any) => {
     };
 };
 
-const MetricCard = ({ icon: Icon, label, value, trend, status, color = "text-blue-500" }: any) => (
+type MetricCardProps = {
+    icon: React.ElementType;
+    label: string;
+    value: string | number;
+    trend: string;
+    status: string;
+    color?: string;
+};
+
+const MetricCard = ({ icon: Icon, label, value, trend, status, color = "text-blue-500" }: MetricCardProps) => (
     <div className="bg-gray-800/40 p-4 rounded-lg border border-gray-700/50 flex items-center justify-between hover:bg-gray-800/60 transition-colors">
         <div className="flex items-center gap-3">
             <div className={`p-2 rounded-md bg-opacity-20 ${color.replace('text-', 'bg-')}`}>
@@ -91,17 +108,42 @@ const MetricCard = ({ icon: Icon, label, value, trend, status, color = "text-blu
 export const MacroView = () => {
     const [data, setData] = useState<MacroData | null>(null);
     const [loading, setLoading] = useState(true);
+    const [error, setError] = useState<string | null>(null);
+
+    const fetchWithTimeout = async (url: string, timeoutMs: number) => {
+        const controller = new AbortController();
+        const id = setTimeout(() => controller.abort(), Math.max(1000, timeoutMs));
+        try {
+            return await fetch(url, { signal: controller.signal });
+        } finally {
+            clearTimeout(id);
+        }
+    };
 
     useEffect(() => {
         const fetchData = async () => {
             try {
-                const res = await fetch('/api/fred');
+                setError(null);
+                const res = await fetchWithTimeout('/api/fred', 12000);
+                if (!res.ok) {
+                    const msg = `Macro feed error (/api/fred): HTTP ${res.status}`;
+                    setError(msg);
+                    setData(null);
+                    return;
+                }
                 const json = await res.json();
-                if (json.success) {
+                if (json && json.success) {
                     setData(json);
+                    setError(null);
+                } else {
+                    const msg = (json && json.error) ? String(json.error) : 'Unknown macro feed error';
+                    setError(msg);
+                    setData(null);
                 }
             } catch (e) {
-                console.error("Failed to fetch macro data", e);
+                const msg = (e instanceof Error) ? e.message : String(e);
+                setError(`Failed to fetch macro data: ${msg}`);
+                setData(null);
             } finally {
                 setLoading(false);
             }
@@ -109,7 +151,14 @@ export const MacroView = () => {
         fetchData();
     }, []);
 
-    const institutional = data ? analyzeInstitutionalMacro(data.data) : null;
+    const institutional = (() => {
+        try {
+            return data ? analyzeInstitutionalMacro(data) : null;
+        } catch (e) {
+            console.error('Institutional macro analysis failed', e);
+            return null;
+        }
+    })();
     const oracle = deriveOracleConclusion(data, institutional);
 
     // MOCK DATA FOR MISSING SECTIONS
@@ -121,6 +170,53 @@ export const MacroView = () => {
 
     return (
         <div className="space-y-6 max-w-[1700px] mx-auto pb-20">
+            {!loading && error && (
+                <Card className="bg-red-950/20 border border-red-900/40">
+                    <CardContent className="p-4 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+                        <div className="text-sm text-red-200">
+                            <div className="font-bold text-red-300">Macro feed failed</div>
+                            <div className="text-xs text-red-200/80 font-mono break-words">{error}</div>
+                            <div className="text-xs text-gray-400 mt-2">
+                                Set <span className="font-mono text-gray-300">FRED_API_KEY</span> in <span className="font-mono text-gray-300">gmpm-app/.env.local</span> and restart <span className="font-mono text-gray-300">npm run dev</span>.
+                            </div>
+                        </div>
+                        <button
+                            className="px-4 py-2 rounded bg-red-600/30 border border-red-600/50 text-red-100 hover:bg-red-600/40 transition-colors text-xs font-bold"
+                            onClick={() => {
+                                setLoading(true);
+                                setError(null);
+                                (async () => {
+                                    try {
+                                        const res = await fetchWithTimeout('/api/fred', 12000);
+                                        if (!res.ok) {
+                                            setError(`Macro feed error (/api/fred): HTTP ${res.status}`);
+                                            setData(null);
+                                            return;
+                                        }
+                                        const json = await res.json();
+                                        if (json && json.success) {
+                                            setData(json);
+                                            setError(null);
+                                        } else {
+                                            setError((json && json.error) ? String(json.error) : 'Unknown macro feed error');
+                                            setData(null);
+                                        }
+                                    } catch (e) {
+                                        const msg = (e instanceof Error) ? e.message : String(e);
+                                        setError(`Failed to fetch macro data: ${msg}`);
+                                        setData(null);
+                                    } finally {
+                                        setLoading(false);
+                                    }
+                                })();
+                            }}
+                        >
+                            RETRY
+                        </button>
+                    </CardContent>
+                </Card>
+            )}
+
             {/* HEADER */}
             <div className="flex flex-col gap-0 border-b border-gray-800 pb-0">
                 <div className="flex items-center justify-between pb-6">
@@ -147,7 +243,7 @@ export const MacroView = () => {
                         </div>
                         <div className="text-right hidden md:block">
                             <div className="text-[10px] text-gray-500 uppercase font-bold">Last Fetch</div>
-                            <div className="text-xs text-gray-300 font-mono">{loading ? "SYNCING..." : new Date().toLocaleTimeString()}</div>
+                            <div className="text-xs text-gray-300 font-mono">{loading ? "SYNCING..." : (data?.timestamp ? new Date(data.timestamp).toLocaleTimeString() : "N/A")}</div>
                         </div>
                     </div>
                 </div>
@@ -306,14 +402,16 @@ export const MacroView = () => {
                         <h3 className="text-sm font-bold text-gray-500 uppercase tracking-widest mb-4 flex items-center gap-2">
                             <Activity className="w-4 h-4" /> Economic Core Data (Real-Time)
                         </h3>
-                        {loading || !data ? (
+                        {loading ? (
                             <div className="text-center text-gray-500 py-10">Syncing with Federal Reserve Database...</div>
+                        ) : !data ? (
+                            <div className="text-center text-gray-500 py-10">Macro feed unavailable.</div>
                         ) : (
                             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                                <MetricCard icon={Users} label="US GDP (Real)" value={`$${data.summary.gdp.value}B`} trend={data.summary.gdp.trend} status={data.summary.gdp.trend} color="text-emerald-500" />
-                                <MetricCard icon={DollarSign} label="CPI Inflation" value={data.summary.inflation.cpi} trend={data.summary.inflation.trend} status={data.summary.inflation.trend === 'FALLING' ? "COOLING" : "HEATING"} color="text-red-500" />
-                                <MetricCard icon={Scale} label="Fed Funds Rate" value={`${data.summary.rates.fedFunds}%`} trend={data.summary.rates.curveStatus} status={data.summary.rates.curveStatus === 'INVERTED' ? "INVERTED" : "NORMAL"} color="text-blue-500" />
-                                <MetricCard icon={Activity} label="Consumer Sentiment" value={data.summary.sentiment.consumerSentiment} trend={data.summary.sentiment.condition} status={data.summary.sentiment.condition} color="text-yellow-500" />
+                                <MetricCard icon={Users} label="US GDP (Real)" value={data.summary.gdp.value !== null ? `$${data.summary.gdp.value}B` : 'N/A'} trend={data.summary.gdp.trend} status={data.summary.gdp.trend} color="text-emerald-500" />
+                                <MetricCard icon={DollarSign} label="CPI Inflation" value={data.summary.inflation.cpi !== null ? data.summary.inflation.cpi : 'N/A'} trend={data.summary.inflation.trend} status={data.summary.inflation.trend === 'FALLING' ? "COOLING" : data.summary.inflation.trend === 'UNKNOWN' ? "UNKNOWN" : "HEATING"} color="text-red-500" />
+                                <MetricCard icon={Scale} label="Fed Funds Rate" value={data.summary.rates.fedFunds !== null ? `${data.summary.rates.fedFunds}%` : 'N/A'} trend={data.summary.rates.curveStatus} status={data.summary.rates.curveStatus} color="text-blue-500" />
+                                <MetricCard icon={Activity} label="Consumer Sentiment" value={data.summary.sentiment.consumerSentiment !== null ? data.summary.sentiment.consumerSentiment : 'N/A'} trend={data.summary.sentiment.condition} status={data.summary.sentiment.condition} color="text-yellow-500" />
                             </div>
                         )}
                     </div>
@@ -332,7 +430,7 @@ export const MacroView = () => {
                                         <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
                                         <span className="relative inline-flex rounded-full h-3 w-3 bg-red-500"></span>
                                     </span>
-                                    <span className="text-xs font-mono text-red-400 animate-pulse">LIVE MONITORING</span>
+                                    <span className="text-xs font-mono text-red-400">STATIC</span>
                                 </div>
                             </CardTitle>
                         </CardHeader>
@@ -365,8 +463,11 @@ export const MacroView = () => {
                 </TabsContent>
 
                 <TabsContent value="liquidity">
-                    {institutional ? (() => {
-                        const liquidity = getLiquidityData(institutional.overall.regime);
+                    {data ? (() => {
+                        const liquidity = getLiquidityData(data);
+                        if (!liquidity) {
+                            return <div className="text-center text-gray-500">Liquidity data unavailable.</div>;
+                        }
                         return (
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                                 <Card className="bg-gray-900 border-gray-800">
@@ -410,7 +511,7 @@ export const MacroView = () => {
                                             <BarChart2 className="w-6 h-6 mr-2" /> Flow Chart Visualization
                                         </div>
                                         <p className="mt-4 text-sm text-gray-400">
-                                            Institutional flows are currently {liquidity.trend.toLowerCase()} relative to last week ({liquidity.change24h > 0 ? '+' : ''}{liquidity.change24h.toFixed(2)}%).
+                                            Institutional flows are currently {liquidity.trend.toLowerCase()} relative to last week ({liquidity.change24h === null ? 'N/A' : `${liquidity.change24h > 0 ? '+' : ''}${liquidity.change24h.toFixed(2)}%`}).
                                             {liquidity.trend === 'EXPANDING' ? " Risk assets generally favored." : " Caution advised in high-beta assets."}
                                         </p>
                                     </CardContent>
@@ -421,8 +522,11 @@ export const MacroView = () => {
                 </TabsContent>
 
                 <TabsContent value="sentiment">
-                    {institutional ? (() => {
-                        const sentiment = getSocialSentiment(institutional.risk.score);
+                    {data ? (() => {
+                        const sentiment = getSocialSentiment(data);
+                        if (!sentiment) {
+                            return <div className="text-center text-gray-500">Sentiment proxy unavailable.</div>;
+                        }
                         return (
                             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                                 <Card className="bg-gray-900 border-gray-800 md:col-span-2">
@@ -472,9 +576,9 @@ export const MacroView = () => {
                                         <div className="border-t border-gray-800 pt-4 text-left">
                                             <div className="text-xs text-gray-500 flex justify-between">
                                                 <span>Conviction</span>
-                                                <span className="text-white">{sentiment.narrativeStrength}/100</span>
+                                                <span className="text-white">{sentiment.narrativeStrength === null ? 'N/A' : `${sentiment.narrativeStrength}/100`}</span>
                                             </div>
-                                            <Progress value={sentiment.narrativeStrength} className="h-1 mt-1 bg-gray-800" />
+                                            <Progress value={sentiment.narrativeStrength ?? 0} className="h-1 mt-1 bg-gray-800" />
                                         </div>
                                     </CardContent>
                                 </Card>

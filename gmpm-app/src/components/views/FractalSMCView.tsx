@@ -27,14 +27,19 @@ export const FractalSMCView = ({ symbol }: FractalSMCViewProps) => {
 
             if (data.success && data.data.candles) {
                 // Map API candles to SMC Engine format
-                const candles: Candle[] = data.data.candles.map((c: any) => ({
-                    time: c.timestamp || new Date(c.date).getTime(),
-                    open: c.open,
-                    high: c.high,
-                    low: c.low,
-                    close: c.close,
-                    volume: c.volume
-                }));
+                const candles: Candle[] = (data.data.candles as unknown[]).map((c: unknown) => {
+                    const r = (typeof c === 'object' && c !== null) ? (c as Record<string, unknown>) : {};
+                    const ts = typeof r.timestamp === 'number' ? r.timestamp : null;
+                    const dt = typeof r.date === 'string' ? r.date : null;
+                    return {
+                        time: ts ?? (dt ? new Date(dt).getTime() : Date.now()),
+                        open: Number(r.open),
+                        high: Number(r.high),
+                        low: Number(r.low),
+                        close: Number(r.close),
+                        volume: Number(r.volume),
+                    };
+                });
 
                 const currentPrice = candles[candles.length - 1].close;
                 setPrice(currentPrice);

@@ -185,6 +185,24 @@ interface MacroData {
     fearGreed: FearGreedData | null;
 }
 
+async function fetchFredLatest(seriesId: string): Promise<number | null> {
+    const apiKey = process.env.FRED_API_KEY;
+    if (!apiKey) return null;
+
+    try {
+        const url = `https://api.stlouisfed.org/fred/series/observations?series_id=${encodeURIComponent(seriesId)}&api_key=${encodeURIComponent(apiKey)}&file_type=json&sort_order=desc&limit=1`;
+        const res = await fetch(url, { next: { revalidate: 300 } });
+        if (!res.ok) return null;
+
+        const json = await res.json();
+        const v = json?.observations?.[0]?.value;
+        const n = typeof v === 'string' ? Number.parseFloat(v) : Number.NaN;
+        return Number.isFinite(n) ? n : null;
+    } catch {
+        return null;
+    }
+}
+
 // ===== YAHOO FINANCE FETCHER =====
 async function fetchYahooQuote(symbol: string): Promise<QuoteData | null> {
     try {
@@ -211,11 +229,20 @@ async function fetchYahooQuote(symbol: string): Promise<QuoteData | null> {
         // Safely handle volumes, some assets might calculate them differently or be null
         const volumes = quotes.volume?.filter((v: number | null) => v !== null) || [];
 
-        const currentPrice = closes[closes.length - 1] || meta.regularMarketPrice;
-        const previousClose = meta.previousClose || closes[closes.length - 2] || currentPrice;
+        const currentPriceRaw = closes[closes.length - 1] || meta.regularMarketPrice;
+        const previousCloseRaw = meta.previousClose || closes[closes.length - 2] || currentPriceRaw;
+
+        // Yahoo treasury yield tickers are often scaled by 10 (e.g. ^TNX=42.5 => 4.25%),
+        // but sometimes can already be expressed in % terms depending on upstream behavior.
+        // Heuristic: if value is > 20, treat it as scaled-by-10.
+        const yieldScaledSymbols = new Set(['^TNX', '^TYX', '^FVX']);
+        const scale = (yieldScaledSymbols.has(symbol) && currentPriceRaw > 20) ? 10 : 1;
+
+        const currentPrice = currentPriceRaw / scale;
+        const previousClose = previousCloseRaw / scale;
 
         const change = currentPrice - previousClose;
-        const changePercent = (change / previousClose) * 100;
+        const changePercent = previousClose !== 0 ? (change / previousClose) * 100 : 0;
 
         // Calculate Avg Volume (20 days)
         let avgVolume = 0;
@@ -279,16 +306,16 @@ async function fetchYahooQuote(symbol: string): Promise<QuoteData | null> {
             changePercent,
             volume: meta.regularMarketVolume || 0,
             avgVolume, // ADDED: AvgVolume
-            high: meta.regularMarketDayHigh || currentPrice,
-            low: meta.regularMarketDayLow || currentPrice,
-            open: meta.regularMarketOpen || previousClose,
+            high: (meta.regularMarketDayHigh || currentPriceRaw) / scale,
+            low: (meta.regularMarketDayLow || currentPriceRaw) / scale,
+            open: (meta.regularMarketOpen || previousCloseRaw) / scale,
             previousClose,
             marketState: meta.marketState || 'UNKNOWN',
             assetClass,
             atr,
             rsi,
         };
-    } catch (error) {
+    } catch {
         return null;
     }
 }
@@ -321,6 +348,8 @@ export async function GET(request: Request) {
     const category = searchParams.get('category');
     const limit = parseInt(searchParams.get('limit') || '0');
 
+    const macroSymbols = ['^VIX', '^TNX', '^TYX', '^FVX', 'DX=F'];
+
     try {
         let symbolsToFetch = ALL_SYMBOLS;
 
@@ -331,6 +360,9 @@ export async function GET(request: Request) {
         if (limit > 0) {
             symbolsToFetch = symbolsToFetch.slice(0, limit);
         }
+
+        // Always include core macro context symbols even when limit/category is used
+        symbolsToFetch = Array.from(new Set([...symbolsToFetch, ...macroSymbols]));
 
         // Fetch in batches
         const batchSize = 20;
@@ -350,13 +382,25 @@ export async function GET(request: Request) {
         const dxy = allQuotes.find(q => q.symbol === 'DX=F');
         const fearGreed = await fetchFearGreed();
 
+        // Prefer real FRED yields when available (more accurate than Yahoo proxies)
+        const [fred10y, fred2y] = await Promise.all([
+            fetchFredLatest('DGS10'),
+            fetchFredLatest('DGS2'),
+        ]);
+
+        const treasury10y = (fred10y !== null) ? fred10y : (treas10y?.price || 0);
+        const treasury2y = (fred2y !== null) ? fred2y : (treas5y?.price || 0);
+        let yieldCurve = 0;
+        if (fred10y !== null && fred2y !== null) yieldCurve = fred10y - fred2y;
+        else if (treas10y?.price && treas5y?.price) yieldCurve = treas10y.price - treas5y.price;
+
         const macro: MacroData = {
             vix: vixQuote?.price || 0,
             vixChange: vixQuote?.changePercent || 0,
-            treasury10y: treas10y?.price || 0,
-            treasury2y: treas5y?.price || 0, // Using 5Y as proxy
+            treasury10y,
+            treasury2y,
             treasury30y: treas30y?.price || 0,
-            yieldCurve: (treas10y?.price || 0) - (treas5y?.price || 0),
+            yieldCurve,
             dollarIndex: dxy?.price || 0,
             fearGreed,
         };
@@ -386,6 +430,7 @@ export async function GET(request: Request) {
             count: allQuotes.length,
             stats,
             macro,
+            assets: allQuotes,
             data: allQuotes,
             byClass,
         });

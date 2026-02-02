@@ -34,11 +34,7 @@ export const RiskDashboardView = () => {
     const [stressResults, setStressResults] = useState<StressResult[]>([]);
     const [loading, setLoading] = useState(true);
 
-    useEffect(() => {
-        refreshAll();
-    }, []);
-
-    const refreshAll = async () => {
+    async function refreshAll() {
         setLoading(true);
 
         // Update signal prices
@@ -54,7 +50,6 @@ export const RiskDashboardView = () => {
         if (learningState.totalSignals > 10) {
             // Create trade array from learning data
             const trades = [];
-            const winRate = learningState.totalWins / Math.max(1, learningState.totalSignals);
             const avgWinR = 1.5; // Estimate
             const avgLossR = -1;
 
@@ -78,7 +73,14 @@ export const RiskDashboardView = () => {
         setStressResults(runStressTest(capital, exposure));
 
         setLoading(false);
-    };
+    }
+
+    useEffect(() => {
+        const t = setTimeout(() => {
+            void refreshAll();
+        }, 0);
+        return () => clearTimeout(t);
+    }, []);
 
     if (loading) {
         return (

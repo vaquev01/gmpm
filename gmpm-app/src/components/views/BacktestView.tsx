@@ -171,7 +171,7 @@ export const BacktestView = () => {
                         <Activity className="w-16 h-16 mb-4 opacity-20" />
                         <h3 className="text-xl font-bold opacity-50">Ready to Simulate</h3>
                         <p className="text-sm opacity-40 max-w-xs text-center mt-2">
-                            Configure parameters on the left and click "Run Simulation" to generate performance data.
+                            Configure parameters on the left and click &quot;Run Simulation&quot; to generate performance data.
                         </p>
                     </div>
                 ) : (

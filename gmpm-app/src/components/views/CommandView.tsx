@@ -73,7 +73,39 @@ const Sparkline = ({ data, color = "text-green-500", height = "h-4" }: { data: n
     );
 };
 
-const MarketContextPanel = ({ macro }: { macro: any }) => {
+const MarketContextPanel = ({ macro, assets }: { macro: unknown; assets: ScoredAsset[] }) => {
+    const m = (typeof macro === 'object' && macro !== null) ? (macro as Record<string, unknown>) : {};
+    const vix = typeof m.vix === 'number' ? m.vix : null;
+    const vixChange = typeof m.vixChange === 'number' ? m.vixChange : null;
+    const dollarIndex = typeof m.dollarIndex === 'number' ? m.dollarIndex : null;
+    const treasury10y = typeof m.treasury10y === 'number' ? m.treasury10y : null;
+    const fgObj = (typeof m.fearGreed === 'object' && m.fearGreed !== null) ? (m.fearGreed as Record<string, unknown>) : null;
+    const fearGreedValue = fgObj && typeof fgObj.value === 'number' ? fgObj.value : null;
+
+    const list = Array.isArray(assets) ? assets : [];
+    const adv = list.filter(a => (a.changePercent || 0) > 0).length;
+    const dec = list.filter(a => (a.changePercent || 0) < 0).length;
+    const breadthRatio = (adv > 0 && dec > 0) ? (adv / dec) : (adv > 0 && dec === 0) ? Infinity : 1;
+    const breadthTitle = (adv === 0 && dec === 0)
+        ? 'Breadth N/A'
+        : (breadthRatio >= 2 ? 'Strong breadth' : breadthRatio >= 1 ? 'Balanced breadth' : 'Weak breadth');
+    const breadthSubtitle = (adv === 0 && dec === 0)
+        ? 'No market snapshot'
+        : `${adv} adv / ${dec} dec`;
+
+    const upPct = list.length > 0 ? (adv / list.length) * 100 : null;
+
+    const byGroup = new Map<string, { sum: number; count: number }>();
+    for (const a of list) {
+        const key = (a.sector && a.sector !== 'N/A') ? a.sector : a.assetClass;
+        const prev = byGroup.get(key) || { sum: 0, count: 0 };
+        byGroup.set(key, { sum: prev.sum + (a.changePercent || 0), count: prev.count + 1 });
+    }
+    const groups = Array.from(byGroup.entries())
+        .map(([k, v]) => ({ key: k, avg: v.count > 0 ? (v.sum / v.count) : 0 }))
+        .sort((a, b) => b.avg - a.avg)
+        .slice(0, 3);
+
     return (
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
             {/* MACRO */}
@@ -85,26 +117,26 @@ const MarketContextPanel = ({ macro }: { macro: any }) => {
                     </div>
                     <div className="flex justify-between items-end mb-3">
                         <div className="text-lg font-bold text-gray-200">
-                            {macro?.vix < 20 ? 'Risk-On / Expansion' : 'Risk-Off / Contraction'}
+                            {vix !== null && vix < 20 ? 'Risk-On / Expansion' : 'Risk-Off / Contraction'}
                         </div>
                         <div className="text-xs text-gray-500">
-                            {macro?.vix < 20 ? 'Liquidity Increasing' : 'High Volatility'}
+                            {vix !== null && vix < 20 ? 'Liquidity Increasing' : 'High Volatility'}
                         </div>
                     </div>
                     <div className="grid grid-cols-3 gap-2 border-t border-gray-800 pt-3">
                         <div>
                             <div className="text-[10px] text-gray-500 uppercase font-bold">VIX</div>
-                            <div className={cn("text-sm font-mono", macro?.vixChange < 0 ? "text-green-400" : "text-red-400")}>
-                                {macro?.vix?.toFixed(2)}
+                            <div className={cn("text-sm font-mono", vixChange !== null && vixChange < 0 ? "text-green-400" : "text-red-400")}>
+                                {vix !== null ? vix.toFixed(2) : 'N/A'}
                             </div>
                         </div>
                         <div>
                             <div className="text-[10px] text-gray-500 uppercase font-bold">DXY</div>
-                            <div className="text-sm font-mono text-gray-300">{macro?.dollarIndex?.toFixed(2)}</div>
+                            <div className="text-sm font-mono text-gray-300">{dollarIndex !== null ? dollarIndex.toFixed(2) : 'N/A'}</div>
                         </div>
                         <div>
                             <div className="text-[10px] text-gray-500 uppercase font-bold">US10Y</div>
-                            <div className="text-sm font-mono text-gray-300">{macro?.treasury10y?.toFixed(2)}%</div>
+                            <div className="text-sm font-mono text-gray-300">{treasury10y !== null ? `${treasury10y.toFixed(2)}%` : 'N/A'}</div>
                         </div>
                     </div>
                 </CardContent>
@@ -118,22 +150,20 @@ const MarketContextPanel = ({ macro }: { macro: any }) => {
                         <span className="text-xs font-bold uppercase tracking-wider">Sector Rotation</span>
                     </div>
                     <div className="flex justify-between items-end mb-3">
-                        <div className="text-lg font-bold text-gray-200">Tech & Crypto Leading</div>
-                        <div className="text-xs text-gray-500">Momentum Factor</div>
+                        <div className="text-lg font-bold text-gray-200">{groups.length > 0 ? `${groups[0].key} Leading` : 'N/A'}</div>
+                        <div className="text-xs text-gray-500">{groups.length > 0 ? 'Avg move by group' : 'No market snapshot'}</div>
                     </div>
                     <div className="grid grid-cols-3 gap-2 border-t border-gray-800 pt-3">
-                        <div>
-                            <div className="text-[10px] text-gray-500 uppercase font-bold">XLK (Tech)</div>
-                            <div className="text-sm font-mono text-green-400">+1.4%</div>
-                        </div>
-                        <div>
-                            <div className="text-[10px] text-gray-500 uppercase font-bold">XCF (Fin)</div>
-                            <div className="text-sm font-mono text-green-400">+0.8%</div>
-                        </div>
-                        <div>
-                            <div className="text-[10px] text-gray-500 uppercase font-bold">XLE (Eng)</div>
-                            <div className="text-sm font-mono text-red-400">-0.5%</div>
-                        </div>
+                        {groups.length > 0 ? groups.map((g) => (
+                            <div key={g.key}>
+                                <div className="text-[10px] text-gray-500 uppercase font-bold">{g.key}</div>
+                                <div className={cn("text-sm font-mono", g.avg >= 0 ? "text-green-400" : "text-red-400")}>
+                                    {g.avg >= 0 ? '+' : ''}{g.avg.toFixed(1)}%
+                                </div>
+                            </div>
+                        )) : (
+                            <div className="col-span-3 text-xs text-gray-500">N/A</div>
+                        )}
                     </div>
                 </CardContent>
             </Card>
@@ -146,21 +176,21 @@ const MarketContextPanel = ({ macro }: { macro: any }) => {
                         <span className="text-xs font-bold uppercase tracking-wider">Market Breadth</span>
                     </div>
                     <div className="flex justify-between items-end mb-3">
-                        <div className="text-lg font-bold text-gray-200">Strong breadth (&gt;2.0)</div>
-                        <div className="text-xs text-gray-500">Broad Participation</div>
+                        <div className="text-lg font-bold text-gray-200">{breadthTitle}</div>
+                        <div className="text-xs text-gray-500">{breadthSubtitle}</div>
                     </div>
                     <div className="grid grid-cols-3 gap-2 border-t border-gray-800 pt-3">
                         <div>
                             <div className="text-[10px] text-gray-500 uppercase font-bold">Adv/Dec</div>
-                            <div className="text-sm font-mono text-green-400">2150/450</div>
+                            <div className="text-sm font-mono text-green-400">{adv === 0 && dec === 0 ? 'N/A' : `${adv}/${dec}`}</div>
                         </div>
                         <div>
-                            <div className="text-[10px] text-gray-500 uppercase font-bold">&gt;MA200</div>
-                            <div className="text-sm font-mono text-gray-300">85%</div>
+                            <div className="text-[10px] text-gray-500 uppercase font-bold">Up %</div>
+                            <div className="text-sm font-mono text-gray-300">{upPct === null ? 'N/A' : `${upPct.toFixed(0)}%`}</div>
                         </div>
                         <div>
                             <div className="text-[10px] text-gray-500 uppercase font-bold">Fear/Greed</div>
-                            <div className="text-sm font-mono text-green-400">{macro?.fearGreed?.value || 65}</div>
+                            <div className="text-sm font-mono text-green-400">{fearGreedValue !== null ? fearGreedValue : 'N/A'}</div>
                         </div>
                     </div>
                 </CardContent>
@@ -282,7 +312,7 @@ export const CommandView = () => {
 
     // Real Data States
     const [assets, setAssets] = useState<ScoredAsset[]>([]);
-    const [macro, setMacro] = useState<any>(null);
+    const [macro, setMacro] = useState<unknown>(null);
     const [loading, setLoading] = useState(true);
     const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
     const [stats, setStats] = useState({ total: 0, latency: 0 });
@@ -450,7 +480,7 @@ export const CommandView = () => {
             )}
 
             {/* 0. MARKET CONTEXT (Real Evidence) */}
-            <MarketContextPanel macro={macro} />
+            <MarketContextPanel macro={macro} assets={assets} />
 
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 h-[calc(100vh-280px)] min-h-[500px]">
 
@@ -492,27 +522,36 @@ export const CommandView = () => {
                                     {/* CONFIG INPUTS */}
                                     <div className="flex items-center gap-2 px-3 border-l border-gray-800">
                                         <div className="flex flex-col">
-                                            <label className="text-[9px] text-gray-500 font-bold uppercase">Capital</label>
+                                            <label htmlFor="builder-capital" className="text-[9px] text-gray-500 font-bold uppercase">Capital</label>
                                             <input
+                                                id="builder-capital"
                                                 type="number"
+                                                aria-label="Capital"
+                                                placeholder="100000"
                                                 className="w-20 bg-gray-900 border border-gray-800 text-xs text-white px-1 rounded focus:border-blue-500 outline-none"
                                                 value={builderConfig.capital}
                                                 onChange={(e) => setBuilderConfig({ ...builderConfig, capital: Number(e.target.value) })}
                                             />
                                         </div>
                                         <div className="flex flex-col">
-                                            <label className="text-[9px] text-gray-500 font-bold uppercase">Lev (x)</label>
+                                            <label htmlFor="builder-leverage" className="text-[9px] text-gray-500 font-bold uppercase">Lev (x)</label>
                                             <input
+                                                id="builder-leverage"
                                                 type="number"
+                                                aria-label="Leverage"
+                                                placeholder="1"
                                                 className="w-12 bg-gray-900 border border-gray-800 text-xs text-white px-1 rounded focus:border-blue-500 outline-none"
                                                 value={builderConfig.leverage}
                                                 onChange={(e) => setBuilderConfig({ ...builderConfig, leverage: Number(e.target.value) })}
                                             />
                                         </div>
                                         <div className="flex flex-col">
-                                            <label className="text-[9px] text-gray-500 font-bold uppercase">Lots</label>
+                                            <label htmlFor="builder-lots" className="text-[9px] text-gray-500 font-bold uppercase">Lots</label>
                                             <input
+                                                id="builder-lots"
                                                 type="number" step="0.1"
+                                                aria-label="Lots"
+                                                placeholder="1"
                                                 className="w-12 bg-gray-900 border border-gray-800 text-xs text-white px-1 rounded focus:border-blue-500 outline-none"
                                                 value={builderConfig.lots}
                                                 onChange={(e) => setBuilderConfig({ ...builderConfig, lots: Number(e.target.value) })}
@@ -608,7 +647,7 @@ export const CommandView = () => {
                                                 <TableCell>
                                                     {/* Simulated Sparkline for now (random variation based on score) */}
                                                     <Sparkline
-                                                        data={[row.score / 10, row.score / 10 + (Math.random() - 0.5), row.score / 10 + (Math.random() - 0.5), row.score / 10 + (Math.random() - 0.5), row.score / 10 + (Math.random() - 0.5)]}
+                                                        data={[row.score / 10, row.score / 10, row.score / 10, row.score / 10, row.score / 10]}
                                                         color={row.score > 50 ? "text-green-500" : "text-red-500"}
                                                         height="h-3"
                                                     />

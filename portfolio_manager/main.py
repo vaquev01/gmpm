@@ -29,6 +29,7 @@ from scoring.calculator import ScoreCalculator
 # Analysis
 from analysis.regime import RegimeDetector
 from analysis.scenario import ScenarioEngine
+from analysis.meso import MesoAnalyzer
 
 # Output
 from output.generator import OutputGenerator
@@ -62,6 +63,7 @@ class PortfolioManagerSystem:
         self.score_calc = ScoreCalculator()
         self.regime_detector = RegimeDetector(self.macro_fetcher)
         self.scenario_engine = ScenarioEngine(self.macro_fetcher)
+        self.meso_analyzer = MesoAnalyzer()
         self.output_gen = OutputGenerator(
             capital=settings.INITIAL_CAPITAL,
             risk_per_trade=settings.MAX_RISK_PER_TRADE
@@ -109,13 +111,37 @@ class PortfolioManagerSystem:
                 logger.warning("No market data available")
                 return "No data"
             
-            # 2. Detect regime & scenario
-            macro_data = {}
-            if self.macro_fetcher.is_available():
-                macro_data = self.macro_fetcher.get_latest_values()
-            
-            regime_state = self.regime_detector.detect(macro_data)
-            scenario_state = self.scenario_engine.determine(macro_data)
+            # 2. Detect regime & scenario (macro snapshot)
+            macro_snapshot = {}
+            macro_flat = {}
+            macro_features = {}
+            try:
+                macro_snapshot = self.macro_fetcher.get_macro_snapshot()
+                if isinstance(macro_snapshot, dict):
+                    macro_flat = macro_snapshot.get('flat', {}) or {}
+                    macro_features = macro_snapshot.get('features', {}) or {}
+            except Exception as e:
+                logger.warning(f"Could not build macro snapshot: {e}")
+
+            regime_state = self.regime_detector.detect(macro_flat)
+            scenario_state = self.scenario_engine.determine(macro_flat)
+
+            if isinstance(macro_snapshot, dict):
+                macro_snapshot['states'] = {
+                    'regime': {
+                        'value': regime_state.regime,
+                        'confidence': regime_state.confidence,
+                    },
+                    'scenario': {
+                        'value': scenario_state.scenario,
+                        'probability': scenario_state.probability,
+                    },
+                }
+
+                try:
+                    macro_snapshot['meso'] = self.meso_analyzer.analyze(macro_snapshot)
+                except Exception as e:
+                    logger.warning(f"Could not build meso analysis: {e}")
             
             logger.info(f"Regime: {regime_state.regime} | Scenario: {scenario_state.scenario}")
             
@@ -124,7 +150,7 @@ class PortfolioManagerSystem:
             
             # 3. Calculate features for all assets
             logger.info("Calculating features...")
-            features = self.feature_calc.calculate_batch(market_data, macro_data)
+            features = self.feature_calc.calculate_batch(market_data, macro_features)
             
             # 4. Calculate scores
             logger.info("Calculating scores...")
@@ -141,6 +167,7 @@ class PortfolioManagerSystem:
                 regime_conf=regime_state.confidence,
                 scenario=scenario_state.scenario,
                 scenario_prob=scenario_state.probability,
+                macro_snapshot=macro_snapshot,
                 min_score=55
             )
             

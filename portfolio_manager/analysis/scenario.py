@@ -54,9 +54,13 @@ class ScenarioEngine:
         """
         if macro_data is None and self.macro_fetcher:
             try:
-                macro_data = self.macro_fetcher.calculate_macro_indicators()
+                snapshot = self.macro_fetcher.get_macro_snapshot()
+                macro_data = snapshot.get('flat', {}) if isinstance(snapshot, dict) else {}
             except Exception:
-                macro_data = {}
+                try:
+                    macro_data = self.macro_fetcher.calculate_macro_indicators()
+                except Exception:
+                    macro_data = {}
         
         if not macro_data:
             return self.current

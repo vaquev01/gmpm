@@ -3,7 +3,7 @@
 Output Generator - Creates the final trading signals and one-liners
 """
 
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from dataclasses import dataclass, asdict, field
 from datetime import datetime, timedelta
 import json
@@ -30,7 +30,7 @@ class TradeSignal:
     valid_hours: int = 24
 
 
-@dataclass 
+@dataclass
 class SystemOutput:
     """Complete system output"""
     timestamp: str
@@ -45,6 +45,9 @@ class SystemOutput:
     
     # Thesis
     thesis: str
+    
+    # Macro snapshot (structured for downstream consumption)
+    macro_snapshot: Dict[str, Any] = field(default_factory=dict)
     
     # Signals
     signals: List[TradeSignal] = field(default_factory=list)
@@ -69,6 +72,7 @@ class OutputGenerator:
                  regime_conf: float = 50,
                  scenario: str = 'UNCERTAIN',
                  scenario_prob: float = 50,
+                 macro_snapshot: Optional[Dict[str, Any]] = None,
                  min_score: float = 55) -> SystemOutput:
         """
         Generate complete output from asset scores
@@ -121,6 +125,7 @@ class OutputGenerator:
             scenario=scenario,
             scenario_probability=scenario_prob,
             thesis=thesis,
+            macro_snapshot=macro_snapshot or {},
             signals=signals,
             executive_summary=summary,
             one_liners=one_liners

@@ -8,7 +8,7 @@ import { RefreshCw, Play, RotateCcw, DollarSign, Wallet } from 'lucide-react';
 
 export const PaperTradingView = () => {
     const [account, setAccount] = useState<PaperAccount | null>(null);
-    const [lastUpdate, setLastUpdate] = useState(Date.now());
+    const [lastUpdate, setLastUpdate] = useState(() => Date.now());
 
     useEffect(() => {
         // Polling loop for real-time order updates

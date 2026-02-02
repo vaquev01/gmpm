@@ -3,6 +3,10 @@
 
 import { NextResponse } from 'next/server';
 
+const FRED_API_KEY = process.env.FRED_API_KEY;
+const FRED_RELEASES_URL = 'https://api.stlouisfed.org/fred/releases';
+const FRED_RELEASE_DATES_URL = 'https://api.stlouisfed.org/fred/release/dates';
+
 interface EconomicEvent {
     id: string;
     date: string;
@@ -26,22 +30,35 @@ async function fetchUSEvents(): Promise<EconomicEvent[]> {
     const events: EconomicEvent[] = [];
 
     try {
+        if (!FRED_API_KEY) return events;
+
+        const releasesUrl = new URL(FRED_RELEASES_URL);
+        releasesUrl.search = new URLSearchParams({
+            api_key: FRED_API_KEY,
+            file_type: 'json',
+            limit: '20',
+        }).toString();
+
         // FRED releases calendar
-        const response = await fetch(
-            'https://api.stlouisfed.org/fred/releases?api_key=d34af9497bff8446f34108d0649d3d98&file_type=json&limit=20',
-            { next: { revalidate: 3600 } }
-        );
+        const response = await fetch(releasesUrl.toString(), { next: { revalidate: 3600 } });
 
         if (response.ok) {
             const data = await response.json();
             const releases = data.releases || [];
 
             for (const release of releases.slice(0, 10)) {
+                const releaseDatesUrl = new URL(FRED_RELEASE_DATES_URL);
+                releaseDatesUrl.search = new URLSearchParams({
+                    release_id: String(release.id),
+                    api_key: FRED_API_KEY,
+                    file_type: 'json',
+                    limit: '1',
+                    include_release_dates_with_no_data: 'true',
+                    sort_order: 'desc',
+                }).toString();
+
                 // Get next release date
-                const releaseDateResp = await fetch(
-                    `https://api.stlouisfed.org/fred/release/dates?release_id=${release.id}&api_key=d34af9497bff8446f34108d0649d3d98&file_type=json&limit=1&include_release_dates_with_no_data=true&sort_order=desc`,
-                    { next: { revalidate: 3600 } }
-                );
+                const releaseDateResp = await fetch(releaseDatesUrl.toString(), { next: { revalidate: 3600 } });
 
                 if (releaseDateResp.ok) {
                     const dateData = await releaseDateResp.json();

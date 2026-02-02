@@ -39,7 +39,8 @@ class RegimeDetector:
         """
         if macro_data is None and self.macro_fetcher:
             try:
-                macro_data = self.macro_fetcher.get_latest_values()
+                snapshot = self.macro_fetcher.get_macro_snapshot()
+                macro_data = snapshot.get('flat', {}) if isinstance(snapshot, dict) else {}
             except Exception as e:
                 logger.warning(f"Could not fetch macro data: {e}")
                 macro_data = {}
@@ -102,8 +103,12 @@ class RegimeDetector:
             score += 15
         
         # Credit spreads tight = risk on
-        hy_spread = macro.get('HY_SPREAD', macro.get('credit_spread', 400))
-        if hy_spread < 350:
+        credit_spread = macro.get('credit_spread')
+        if credit_spread is None:
+            hy = macro.get('HY_SPREAD')
+            if isinstance(hy, (int, float)):
+                credit_spread = float(hy * 100.0) if hy < 50 else float(hy)
+        if isinstance(credit_spread, (int, float)) and credit_spread < 350:
             score += 15
         
         return min(100, score)
@@ -125,8 +130,12 @@ class RegimeDetector:
             score += 15
         
         # Credit spreads wide = risk off
-        hy_spread = macro.get('HY_SPREAD', macro.get('credit_spread', 400))
-        if hy_spread > 500:
+        credit_spread = macro.get('credit_spread')
+        if credit_spread is None:
+            hy = macro.get('HY_SPREAD')
+            if isinstance(hy, (int, float)):
+                credit_spread = float(hy * 100.0) if hy < 50 else float(hy)
+        if isinstance(credit_spread, (int, float)) and credit_spread > 500:
             score += 15
         
         return min(100, score)
@@ -143,8 +152,12 @@ class RegimeDetector:
             score += 20
         
         # Credit spreads very wide = stress
-        hy_spread = macro.get('HY_SPREAD', macro.get('credit_spread', 400))
-        if hy_spread > 700:
+        credit_spread = macro.get('credit_spread')
+        if credit_spread is None:
+            hy = macro.get('HY_SPREAD')
+            if isinstance(hy, (int, float)):
+                credit_spread = float(hy * 100.0) if hy < 50 else float(hy)
+        if isinstance(credit_spread, (int, float)) and credit_spread > 700:
             score += 30
         
         return min(100, score)

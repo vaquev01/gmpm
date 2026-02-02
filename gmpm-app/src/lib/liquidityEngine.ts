@@ -7,34 +7,38 @@ export interface LiquidityData {
     tga: number; // Treasury General Account in Billions
     fedBalanceSheet: number; // in Trillions
     trend: 'EXPANDING' | 'CONTRACTING' | 'NEUTRAL';
-    change24h: number; // Percent change
+    change24h: number | null; // Percent change
 }
 
-export function getLiquidityData(macroRegime: string): LiquidityData {
-    // Basic simulation logic based on regime
-    let baseLiq = 6.2; // Base Net Liquidity
-    let trend: 'EXPANDING' | 'CONTRACTING' | 'NEUTRAL' = 'NEUTRAL';
-    let change = 0;
+export function getLiquidityData(macro: unknown): LiquidityData | null {
+    const input = (typeof macro === 'object' && macro !== null) ? (macro as Record<string, unknown>) : {};
+    const dataObj = input['data'];
+    const fred = (typeof dataObj === 'object' && dataObj !== null) ? (dataObj as Record<string, unknown>) : input;
 
-    if (macroRegime.includes('EXPANSION') || macroRegime.includes('LOWER')) {
-        baseLiq = 6.45;
-        trend = 'EXPANDING';
-        change = 1.2;
-    } else if (macroRegime.includes('RECESSION') || macroRegime.includes('INFLATION')) {
-        baseLiq = 5.9;
-        trend = 'CONTRACTING';
-        change = -0.8;
+    const walcl_m = Number((fred['WALCL'] as { value?: unknown } | undefined)?.value);
+    const rrp_b = Number((fred['RRPONTSYD'] as { value?: unknown } | undefined)?.value);
+    const tga_m = Number((fred['WTREGEN'] as { value?: unknown } | undefined)?.value);
+
+    if (!Number.isFinite(walcl_m) || !Number.isFinite(rrp_b) || !Number.isFinite(tga_m)) {
+        return null;
     }
 
-    // Add some noise
-    const noise = (Math.random() - 0.5) * 0.05;
+    const fedTr = walcl_m / 1_000_000.0;
+    const rrpTr = rrp_b / 1_000.0;
+    const tgaB = tga_m / 1_000.0;
+    const tgaTr = tgaB / 1_000.0;
+    const netTr = fedTr - rrpTr - tgaTr;
+
+    let trend: 'EXPANDING' | 'CONTRACTING' | 'NEUTRAL' = 'NEUTRAL';
+    if (netTr >= 5.8) trend = 'EXPANDING';
+    else if (netTr <= 5.2) trend = 'CONTRACTING';
 
     return {
-        netLiquidity: baseLiq + noise,
-        rrp: 0.45 + noise * 0.1,
-        tga: 750 + noise * 100,
-        fedBalanceSheet: 7.3 + noise * 0.2,
+        netLiquidity: netTr,
+        rrp: rrpTr,
+        tga: tgaB,
+        fedBalanceSheet: fedTr,
         trend,
-        change24h: change + (Math.random() * 0.4 - 0.2)
+        change24h: null,
     };
 }

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import {
     loadLearningState,
     getLearningInsights,
@@ -16,19 +16,27 @@ import {
 } from 'lucide-react';
 
 export const LearningInsightsView = () => {
-    const [state, setState] = useState<LearningState | null>(null);
-    const [insights, setInsights] = useState<LearningInsight | null>(null);
+    const [state, setState] = useState<LearningState | null>(() => {
+        try {
+            return loadLearningState();
+        } catch {
+            return null;
+        }
+    });
+    const [insights, setInsights] = useState<LearningInsight | null>(() => {
+        try {
+            return getLearningInsights();
+        } catch {
+            return null;
+        }
+    });
     const [showImport, setShowImport] = useState(false);
     const [importData, setImportData] = useState('');
 
-    useEffect(() => {
-        refreshData();
-    }, []);
-
-    const refreshData = () => {
+    function refreshData() {
         setState(loadLearningState());
         setInsights(getLearningInsights());
-    };
+    }
 
     const handleExport = () => {
         const data = exportLearningData();

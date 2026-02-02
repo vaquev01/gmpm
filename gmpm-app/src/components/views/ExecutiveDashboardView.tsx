@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { useStore } from '@/store/useStore';
 import {
     Zap, ArrowRight, Play, CheckCircle2, XCircle,
@@ -12,26 +12,19 @@ import { getActiveSignals, TrackedSignal } from '@/lib/signalTracker';
 import { loadLearningState } from '@/lib/continuousLearning';
 
 export const ExecutiveDashboardView = () => {
-    const { setView } = useStore();
-    const [heroSignal, setHeroSignal] = useState<TrackedSignal | null>(null);
-    const [confidence, setConfidence] = useState(0);
-    const [regime, setRegime] = useState('NEUTRAL');
-
-    useEffect(() => {
-        // 1. Get Best Signal
-        const active = getActiveSignals();
-        // Sort by Score desc
-        const best = active.sort((a, b) => b.score - a.score)[0];
-        setHeroSignal(best || null);
-
-        // 2. Load Context
+    const { setView, setFactoryTab } = useStore();
+    const [heroSignal] = useState<TrackedSignal | null>(() => {
+        const active = getActiveSignals().slice().sort((a, b) => b.score - a.score);
+        return active[0] || null;
+    });
+    const [confidence] = useState<number>(() => {
         const learning = loadLearningState();
-        setConfidence(learning.confidence);
-
-        // 3. Sim Regime
+        return learning.confidence;
+    });
+    const [regime] = useState<string>(() => {
         const h = new Date().getHours();
-        setRegime(h > 9 && h < 16 ? 'RISK_ON' : 'NEUTRAL');
-    }, []);
+        return h > 9 && h < 16 ? 'RISK_ON' : 'NEUTRAL';
+    });
 
     // Helper for score color
     const getScoreColor = (score: number) => {
@@ -184,10 +177,24 @@ export const ExecutiveDashboardView = () => {
 
             {/* ⚫ BLOCO 4 – EXECUÇÃO SECUNDÁRIA */}
             <div className="flex flex-wrap gap-4">
-                <Button variant="outline" className="flex-1 bg-gray-900 border-gray-800 hover:bg-gray-800 hover:text-white" onClick={() => setView('paper')}>
+                <Button
+                    variant="outline"
+                    className="flex-1 bg-gray-900 border-gray-800 hover:bg-gray-800 hover:text-white"
+                    onClick={() => {
+                        setFactoryTab('paper');
+                        setView('factory');
+                    }}
+                >
                     <Play className="w-4 h-4 mr-2" /> Simular no Incubator
                 </Button>
-                <Button variant="outline" className="flex-1 bg-gray-900 border-gray-800 hover:bg-gray-800 hover:text-white" onClick={() => setView('backtest')}>
+                <Button
+                    variant="outline"
+                    className="flex-1 bg-gray-900 border-gray-800 hover:bg-gray-800 hover:text-white"
+                    onClick={() => {
+                        setFactoryTab('backtest');
+                        setView('factory');
+                    }}
+                >
                     <BarChart3 className="w-4 h-4 mr-2" /> Ver Backtest do Setup
                 </Button>
             </div>

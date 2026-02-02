@@ -3,7 +3,7 @@
 
 import { NextResponse } from 'next/server';
 
-const FRED_API_KEY = 'd34af9497bff8446f34108d0649d3d98';
+const FRED_API_KEY = process.env.FRED_API_KEY;
 const FRED_BASE_URL = 'https://api.stlouisfed.org/fred/series/observations';
 
 interface FredObservation {
@@ -17,6 +17,91 @@ interface FredSeriesData {
     value: number;
     date: string;
     unit: string;
+}
+
+async function fetchFredObservations(seriesId: string, limit: number): Promise<FredObservation[] | null> {
+    try {
+        if (!FRED_API_KEY) return null;
+
+        const url = new URL(FRED_BASE_URL);
+        url.search = new URLSearchParams({
+            series_id: seriesId,
+            api_key: FRED_API_KEY,
+            file_type: 'json',
+            sort_order: 'desc',
+            limit: String(Math.max(1, limit)),
+        }).toString();
+
+        const response = await fetch(url.toString(), {
+            next: { revalidate: 3600 },
+        });
+
+        if (!response.ok) return null;
+
+        const data = await response.json();
+        const observations = data.observations as FredObservation[];
+        if (!observations || observations.length === 0) return null;
+
+        return observations;
+    } catch {
+        return null;
+    }
+}
+
+async function fetchFredSeriesWithStatus(
+    seriesId: string,
+    onNonOk?: (status: number, message?: string) => void
+): Promise<FredSeriesData | null> {
+    try {
+        if (!FRED_API_KEY) return null;
+
+        const url = new URL(FRED_BASE_URL);
+        url.search = new URLSearchParams({
+            series_id: seriesId,
+            api_key: FRED_API_KEY,
+            file_type: 'json',
+            sort_order: 'desc',
+            limit: '1',
+        }).toString();
+
+        const response = await fetch(url.toString(), { next: { revalidate: 3600 } });
+        if (!response.ok) {
+            let msg: string | undefined;
+            try {
+                const text = await response.text();
+                try {
+                    const json = JSON.parse(text);
+                    msg = json?.error_message || json?.error || undefined;
+                } catch {
+                    msg = text?.slice(0, 300) || undefined;
+                }
+            } catch {
+                msg = undefined;
+            }
+
+            onNonOk?.(response.status, msg);
+            return null;
+        }
+
+        const data = await response.json();
+        const observations = data.observations as FredObservation[];
+        if (!observations || observations.length === 0) return null;
+
+        const latest = observations[0];
+        const value = parseFloat(latest.value);
+        if (isNaN(value)) return null;
+
+        const series = FRED_SERIES[seriesId as keyof typeof FRED_SERIES];
+        return {
+            seriesId,
+            name: series?.name || seriesId,
+            value,
+            date: latest.date,
+            unit: series?.unit || '',
+        };
+    } catch {
+        return null;
+    }
 }
 
 // Séries do FRED que vamos buscar
@@ -54,6 +139,7 @@ const FRED_SERIES = {
     M2SL: { id: 'M2SL', name: 'M2 Money Supply', unit: 'Billions $' },
     WALCL: { id: 'WALCL', name: 'Fed Total Assets', unit: 'Millions $' },
     RRPONTSYD: { id: 'RRPONTSYD', name: 'Reverse Repo (RRP)', unit: 'Billions $' },
+    WTREGEN: { id: 'WTREGEN', name: 'Treasury General Account (TGA)', unit: 'Millions $' },
 
     // 6. CREDIT & STRESS
     BAMLC0A0CM: { id: 'BAMLC0A0CM', name: 'Credit Spread (AAA)', unit: '%' },
@@ -76,45 +162,33 @@ const FRED_SERIES = {
     VIXCLS: { id: 'VIXCLS', name: 'VIX Index', unit: 'Index' },
 };
 
-async function fetchFredSeries(seriesId: string): Promise<FredSeriesData | null> {
-    try {
-        const url = `${FRED_BASE_URL}?series_id=${seriesId}&api_key=${FRED_API_KEY}&file_type=json&sort_order=desc&limit=1`;
-
-        const response = await fetch(url, {
-            next: { revalidate: 3600 }, // Cache por 1 hora
-        });
-
-        if (!response.ok) return null;
-
-        const data = await response.json();
-        const observations = data.observations as FredObservation[];
-
-        if (!observations || observations.length === 0) return null;
-
-        const latest = observations[0];
-        const value = parseFloat(latest.value);
-
-        if (isNaN(value)) return null;
-
-        const series = FRED_SERIES[seriesId as keyof typeof FRED_SERIES];
-
-        return {
-            seriesId,
-            name: series?.name || seriesId,
-            value,
-            date: latest.date,
-            unit: series?.unit || '',
-        };
-    } catch {
-        return null;
-    }
-}
-
 export async function GET() {
     try {
+        if (!FRED_API_KEY) {
+            return NextResponse.json(
+                { success: false, error: 'Missing FRED_API_KEY' },
+                { status: 500 }
+            );
+        }
+
         // Buscar todas as séries em paralelo
         const seriesIds = Object.keys(FRED_SERIES);
-        const results = await Promise.all(seriesIds.map(fetchFredSeries));
+        let firstNonOkStatus: number | null = null;
+        let firstNonOkMessage: string | null = null;
+        const noteNonOk = (s: number, msg?: string) => {
+            if (firstNonOkStatus === null) {
+                firstNonOkStatus = s;
+                firstNonOkMessage = msg || null;
+            }
+        };
+
+        const results: Array<FredSeriesData | null> = [];
+        const batchSize = 6;
+        for (let i = 0; i < seriesIds.length; i += batchSize) {
+            const batch = seriesIds.slice(i, i + batchSize);
+            const batchResults = await Promise.all(batch.map((id) => fetchFredSeriesWithStatus(id, noteNonOk)));
+            results.push(...batchResults);
+        }
 
         // Filtrar nulls e criar objeto
         const data: Record<string, FredSeriesData> = {};
@@ -124,17 +198,52 @@ export async function GET() {
             }
         }
 
-        // Calcular métricas derivadas
-        const cpiValue = data.CPIAUCSL?.value || 0;
-        const prevCpi = cpiValue * 0.97; // Aproximar CPI anterior (3% YoY)
-        const cpiYoY = cpiValue > 0 ? ((cpiValue - prevCpi) / prevCpi) * 100 : 0;
+        if (Object.keys(data).length === 0) {
+            const statusHint = firstNonOkStatus !== null ? ` Last HTTP status: ${firstNonOkStatus}.` : '';
+            const messageHint = firstNonOkMessage ? ` Message: ${firstNonOkMessage}` : '';
+            return NextResponse.json(
+                {
+                    success: false,
+                    error: `No FRED series could be fetched. Check FRED_API_KEY validity, rate limits, or network connectivity.${statusHint}${messageHint}`,
+                },
+                { status: 502 }
+            );
+        }
 
-        const yieldCurve = (data.DGS10?.value || 0) - (data.DGS2?.value || 0);
+        // Calcular métricas derivadas
+        const cpiValue = Number.isFinite(data.CPIAUCSL?.value) ? data.CPIAUCSL!.value : null;
+
+        const cpiObs = await fetchFredObservations('CPIAUCSL', 13);
+        const cpiObsPrev12 = cpiObs && cpiObs.length >= 13 ? parseFloat(cpiObs[12].value) : NaN;
+
+        const prevCpi = Number.isFinite(cpiObsPrev12) && cpiObsPrev12 > 0 ? cpiObsPrev12 : null;
+        const cpiYoY = (cpiValue !== null && prevCpi !== null && prevCpi > 0)
+            ? ((cpiValue - prevCpi) / prevCpi) * 100
+            : null;
+
+        const gdpValue = Number.isFinite(data.GDPC1?.value) ? data.GDPC1!.value : null;
+        const gdpObs = await fetchFredObservations('GDPC1', 5);
+        const gdpObsPrev4 = gdpObs && gdpObs.length >= 5 ? parseFloat(gdpObs[4].value) : NaN;
+        const prevGdp = Number.isFinite(gdpObsPrev4) && gdpObsPrev4 > 0 ? gdpObsPrev4 : null;
+        const gdpYoY = (gdpValue !== null && prevGdp !== null && prevGdp > 0)
+            ? ((gdpValue - prevGdp) / prevGdp) * 100
+            : null;
+
+        const dgs10 = Number.isFinite(data.DGS10?.value) ? data.DGS10!.value : null;
+        const dgs2 = Number.isFinite(data.DGS2?.value) ? data.DGS2!.value : null;
+        const yieldCurve = (dgs10 !== null && dgs2 !== null) ? (dgs10 - dgs2) : null;
 
         // Determinar trends
-        const gdpTrend = (data.GDPC1?.value || 0) > 20000 ? 'EXPANDING' : 'SLOWING';
-        const inflationTrend = cpiYoY > 3 ? 'RISING' : cpiYoY < 2 ? 'FALLING' : 'STABLE';
-        const employmentTrend = (data.UNRATE?.value || 5) < 4.5 ? 'STRONG' : 'MODERATE';
+        const gdpTrend = (gdpYoY !== null)
+            ? (gdpYoY > 2 ? 'EXPANDING' : gdpYoY < 1 ? 'SLOWING' : 'STABLE')
+            : 'UNKNOWN';
+
+        const inflationTrend = (cpiYoY !== null)
+            ? (cpiYoY > 3 ? 'RISING' : cpiYoY < 2 ? 'FALLING' : 'STABLE')
+            : 'UNKNOWN';
+
+        const unrate = Number.isFinite(data.UNRATE?.value) ? data.UNRATE!.value : null;
+        const employmentTrend = (unrate !== null) ? (unrate < 4.5 ? 'STRONG' : 'MODERATE') : 'UNKNOWN';
 
         return NextResponse.json({
             success: true,
@@ -142,38 +251,38 @@ export async function GET() {
             data,
             summary: {
                 gdp: {
-                    value: data.GDPC1?.value || 0,
+                    value: gdpValue,
                     trend: gdpTrend,
                     lastUpdate: data.GDPC1?.date || '',
                 },
                 inflation: {
-                    cpi: data.CPIAUCSL?.value || 0,
+                    cpi: cpiValue,
                     cpiYoY,
-                    coreCpi: data.CPILFESL?.value || 0,
-                    pce: data.PCEPI?.value || 0,
+                    coreCpi: Number.isFinite(data.CPILFESL?.value) ? data.CPILFESL!.value : null,
+                    pce: Number.isFinite(data.PCEPI?.value) ? data.PCEPI!.value : null,
                     trend: inflationTrend,
                 },
                 employment: {
-                    unemploymentRate: data.UNRATE?.value || 0,
-                    nfp: data.PAYEMS?.value || 0,
-                    initialClaims: data.ICSA?.value || 0,
+                    unemploymentRate: unrate,
+                    nfp: Number.isFinite(data.PAYEMS?.value) ? data.PAYEMS!.value : null,
+                    initialClaims: Number.isFinite(data.ICSA?.value) ? data.ICSA!.value : null,
                     trend: employmentTrend,
                 },
                 rates: {
-                    fedFunds: data.FEDFUNDS?.value || 0,
-                    treasury10y: data.DGS10?.value || 0,
-                    treasury2y: data.DGS2?.value || 0,
+                    fedFunds: Number.isFinite(data.FEDFUNDS?.value) ? data.FEDFUNDS!.value : null,
+                    treasury10y: dgs10,
+                    treasury2y: dgs2,
                     yieldCurve,
-                    curveStatus: yieldCurve < 0 ? 'INVERTED' : yieldCurve < 0.5 ? 'FLAT' : 'NORMAL',
+                    curveStatus: (yieldCurve === null) ? 'UNKNOWN' : yieldCurve < 0 ? 'INVERTED' : yieldCurve < 0.5 ? 'FLAT' : 'NORMAL',
                 },
                 credit: {
-                    aaaSpread: data.BAMLC0A0CM?.value || 0,
-                    hySpread: data.BAMLH0A0HYM2?.value || 0,
-                    condition: (data.BAMLH0A0HYM2?.value || 0) > 5 ? 'STRESSED' : 'NORMAL',
+                    aaaSpread: Number.isFinite(data.BAMLC0A0CM?.value) ? data.BAMLC0A0CM!.value : null,
+                    hySpread: Number.isFinite(data.BAMLH0A0HYM2?.value) ? data.BAMLH0A0HYM2!.value : null,
+                    condition: Number.isFinite(data.BAMLH0A0HYM2?.value) ? (data.BAMLH0A0HYM2!.value > 5 ? 'STRESSED' : 'NORMAL') : 'UNKNOWN',
                 },
                 sentiment: {
-                    consumerSentiment: data.UMCSENT?.value || 0,
-                    condition: (data.UMCSENT?.value || 50) > 80 ? 'OPTIMISTIC' : (data.UMCSENT?.value || 50) < 60 ? 'PESSIMISTIC' : 'NEUTRAL',
+                    consumerSentiment: Number.isFinite(data.UMCSENT?.value) ? data.UMCSENT!.value : null,
+                    condition: Number.isFinite(data.UMCSENT?.value) ? (data.UMCSENT!.value > 80 ? 'OPTIMISTIC' : data.UMCSENT!.value < 60 ? 'PESSIMISTIC' : 'NEUTRAL') : 'UNKNOWN',
                 },
             },
         });

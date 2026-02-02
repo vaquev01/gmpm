@@ -41,12 +41,12 @@ import {
 } from 'lucide-react';
 
 interface FredSummary {
-    gdp: { value: number; trend: string };
-    inflation: { cpiYoY: number; trend: string };
-    employment: { unemploymentRate: number; trend: string };
-    rates: { fedFunds: number; yieldCurve: number; curveStatus: string };
-    credit: { hySpread: number; condition: string };
-    sentiment: { consumerSentiment: number; condition: string };
+    gdp: { value: number | null; trend: string };
+    inflation: { cpiYoY: number | null; trend: string };
+    employment: { unemploymentRate: number | null; trend: string };
+    rates: { fedFunds: number | null; yieldCurve: number | null; curveStatus: string };
+    credit: { hySpread: number | null; condition: string };
+    sentiment: { consumerSentiment: number | null; condition: string };
 }
 
 export const SignalOutputView = () => {
@@ -428,10 +428,21 @@ export const SignalOutputView = () => {
                     <button onClick={exportJSON} className="px-3 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm flex items-center gap-1">
                         <Download className="w-4 h-4" /> Export
                     </button>
-                    <button onClick={fetchData} disabled={isLoading} className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-800 rounded-lg flex items-center gap-2">
+                    <button
+                        onClick={fetchData}
+                        disabled={isLoading}
+                        aria-label="Refresh"
+                        title="Refresh"
+                        className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-800 rounded-lg flex items-center gap-2"
+                    >
                         <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
                     </button>
-                    <button onClick={() => setIsRunning(!isRunning)} className={`px-4 py-2 rounded-lg flex items-center gap-2 ${isRunning ? 'bg-red-600' : 'bg-green-600'}`}>
+                    <button
+                        onClick={() => setIsRunning(!isRunning)}
+                        aria-label={isRunning ? 'Pause auto-refresh' : 'Start auto-refresh'}
+                        title={isRunning ? 'Pause auto-refresh' : 'Start auto-refresh'}
+                        className={`px-4 py-2 rounded-lg flex items-center gap-2 ${isRunning ? 'bg-red-600' : 'bg-green-600'}`}
+                    >
                         {isRunning ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
                     </button>
                 </div>
@@ -614,17 +625,21 @@ export const SignalOutputView = () => {
                         <>
                             <div className="bg-gray-800/50 border border-gray-700 rounded-lg p-2">
                                 <div className="text-xs text-gray-400">Fed Funds</div>
-                                <div className="text-lg font-bold text-white">{fredData.rates.fedFunds.toFixed(2)}%</div>
+                                <div className="text-lg font-bold text-white">{fredData.rates.fedFunds === null ? 'N/A' : `${fredData.rates.fedFunds.toFixed(2)}%`}</div>
                             </div>
                             <div className="bg-gray-800/50 border border-gray-700 rounded-lg p-2">
                                 <div className="text-xs text-gray-400">Yield Curve</div>
-                                <div className={`text-lg font-bold ${fredData.rates.yieldCurve >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                                    {fredData.rates.yieldCurve > 0 ? '+' : ''}{fredData.rates.yieldCurve.toFixed(2)}
-                                </div>
+                                {fredData.rates.yieldCurve === null ? (
+                                    <div className="text-lg font-bold text-gray-400">N/A</div>
+                                ) : (
+                                    <div className={`text-lg font-bold ${fredData.rates.yieldCurve >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                                        {fredData.rates.yieldCurve > 0 ? '+' : ''}{fredData.rates.yieldCurve.toFixed(2)}
+                                    </div>
+                                )}
                             </div>
                             <div className="bg-gray-800/50 border border-gray-700 rounded-lg p-2">
                                 <div className="text-xs text-gray-400">Unemployment</div>
-                                <div className="text-lg font-bold text-white">{fredData.employment.unemploymentRate.toFixed(1)}%</div>
+                                <div className="text-lg font-bold text-white">{fredData.employment.unemploymentRate === null ? 'N/A' : `${fredData.employment.unemploymentRate.toFixed(1)}%`}</div>
                             </div>
                         </>
                     )}
@@ -730,7 +745,12 @@ export const SignalOutputView = () => {
                                     <div className="border-t border-gray-700 p-3 space-y-3 bg-gray-900/30">
                                         <div className="flex items-center gap-2">
                                             <code className="flex-1 bg-gray-900 px-2 py-1 rounded text-xs text-amber-400 font-mono">{signal.oneLiner}</code>
-                                            <button onClick={() => copyOneLiner(signal.oneLiner, signal.id)} className="p-1 bg-gray-700 hover:bg-gray-600 rounded">
+                                            <button
+                                                onClick={() => copyOneLiner(signal.oneLiner, signal.id)}
+                                                aria-label="Copy one-liner"
+                                                title="Copy one-liner"
+                                                className="p-1 bg-gray-700 hover:bg-gray-600 rounded"
+                                            >
                                                 <Copy className={`w-3 h-3 ${copiedId === signal.id ? 'text-green-400' : 'text-gray-400'}`} />
                                             </button>
                                         </div>

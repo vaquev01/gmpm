@@ -1,17 +1,17 @@
 'use client';
 
-import React, { useState } from 'react';
+import React from 'react';
 import { BacktestView } from './BacktestView';
 import { PaperTradingView } from './PaperTradingView';
 import { LearningInsightsView } from './LearningInsightsView';
 import { RiskDashboardView } from './RiskDashboardView';
 import { cn } from '@/lib/utils';
 import { Factory, Play, Shield, FlaskConical, History } from 'lucide-react';
-
-type FactoryTab = 'backtest' | 'paper' | 'learning' | 'risk';
+import { useStore } from '@/store/useStore';
+import { FactoryTab } from '@/types';
 
 export const FactoryView = () => {
-    const [activeTab, setActiveTab] = useState<FactoryTab>('paper');
+    const { factoryTab: activeTab, setFactoryTab: setActiveTab } = useStore();
 
     const tabs = [
         { id: 'paper', label: 'Incubator (Paper)', icon: FlaskConical },

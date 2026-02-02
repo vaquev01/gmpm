@@ -62,7 +62,14 @@ export const IncubatorView = () => {
                 const data = await res.json();
                 if (data.success && data.data) {
                     const priceMap: Record<string, number> = {};
-                    data.data.forEach((a: any) => priceMap[a.symbol] = a.price);
+                    (data.data as unknown[]).forEach((a: unknown) => {
+                        const r = (typeof a === 'object' && a !== null) ? (a as Record<string, unknown>) : {};
+                        const symbol = typeof r.symbol === 'string' ? r.symbol : null;
+                        const price = typeof r.price === 'number' ? r.price : Number(r.price);
+                        if (symbol && Number.isFinite(price)) {
+                            priceMap[symbol] = price;
+                        }
+                    });
                     setPrices(priceMap);
                 }
             } catch (e) { console.error("Incubator price fetch error", e); }
@@ -76,7 +83,6 @@ export const IncubatorView = () => {
     // PnL Calculator
     const calculatePortfolioPnL = (p: IncubatorPortfolio) => {
         let totalPnL = 0;
-        let totalValue = 0;
 
         p.assets.forEach(a => {
             const currentPrice = prices[a.symbol] || a.entryPrice;
@@ -211,7 +217,7 @@ export const IncubatorView = () => {
             <Dialog open={!!editingPortfolioId} onOpenChange={(open) => !open && setEditingPortfolioId(null)}>
                 <DialogContent className="bg-gray-900 border-gray-800 text-white">
                     <DialogHeader>
-                        <DialogTitle>It's time to refine.</DialogTitle>
+                        <DialogTitle>It&apos;s time to refine.</DialogTitle>
                         <DialogDescription className="text-gray-400">
                             Adjust your risk parameters for this portfolio. Changes affect PnL calculations immediately.
                         </DialogDescription>
