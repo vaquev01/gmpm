@@ -46,6 +46,7 @@ export default function VerifyPage() {
     () => [
       { name: 'FRED Macro', path: '/api/fred', status: 'idle' },
       { name: 'Market', path: '/api/market?limit=50', status: 'idle' },
+      { name: 'Regime', path: '/api/regime', status: 'idle' },
       { name: 'News', path: '/api/news?limit=10', status: 'idle' },
       { name: 'Calendar', path: '/api/calendar?days=14', status: 'idle' },
       { name: 'Server Logs', path: '/api/server-logs', status: 'idle' },
@@ -108,6 +109,16 @@ export default function VerifyPage() {
             summary = macro
               ? `VIX=${fmt(macro.vix)} | 10Y=${fmt(macro.treasury10y)} | 2Y=${fmt(macro.treasury2y)} | DXY=${fmt(macro.dollarIndex)} | degraded=${fmt(degraded)} tradeEnabled=${fmt(tradeEnabled)} cov=${fmt(coverage)} | Q(ok=${fmt(okN)} stale=${fmt(staleN)} suspect=${fmt(suspectN)}) | hist=${hasHistory ? 'yes' : 'no'} ts=${hasQuoteTs ? 'yes' : 'no'}`
               : undefined;
+          } else if (c.path.startsWith('/api/regime')) {
+            const snap = isRecord(json) && isRecord(json.snapshot) ? json.snapshot : null;
+            const regime = snap && typeof snap.regime === 'string' ? snap.regime : 'N/A';
+            const conf = snap && typeof snap.regimeConfidence === 'string' ? snap.regimeConfidence : 'N/A';
+            const axes = snap && isRecord(snap.axes) ? snap.axes : null;
+            const axisStr = axes ? ['G', 'I', 'L', 'C', 'D', 'V'].map(a => {
+              const ax = isRecord(axes[a]) ? axes[a] : null;
+              return ax && typeof ax.direction === 'string' ? `${a}${ax.direction}` : `${a}?`;
+            }).join(' ') : 'N/A';
+            summary = `${regime} (${conf}) | ${axisStr}`;
           } else if (c.path.startsWith('/api/news')) {
             const geo = isRecord(json) && Array.isArray(json.geopolitics) ? (json.geopolitics as unknown[]) : null;
             const tech = isRecord(json) && Array.isArray(json.technology) ? (json.technology as unknown[]) : null;
