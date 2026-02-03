@@ -361,6 +361,112 @@ function computeConfluenceScore(asset: RealAssetData) {
     };
 }
 
+// --- MICRO SETUPS PANEL (Pipeline Output) ---
+const MicroSetupsPanel = ({ setups, onSelectAsset }: { 
+    setups: {
+        symbol: string;
+        displaySymbol: string;
+        action: 'EXECUTE' | 'WAIT' | 'AVOID';
+        setup: {
+            type: string;
+            direction: 'LONG' | 'SHORT';
+            entry: number;
+            stopLoss: number;
+            takeProfit1: number;
+            riskReward: number;
+            confidence: 'HIGH' | 'MEDIUM' | 'LOW';
+            confluences: string[];
+            thesis: string;
+            technicalScore: number;
+        } | null;
+    }[];
+    onSelectAsset: (symbol: string) => void;
+}) => {
+    const executeReady = setups.filter(s => s.action === 'EXECUTE' && s.setup);
+    const waiting = setups.filter(s => s.action === 'WAIT' && s.setup);
+
+    if (executeReady.length === 0 && waiting.length === 0) return null;
+
+    return (
+        <Card className="bg-gradient-to-r from-orange-950/30 to-gray-900 border-orange-500/30 mb-4">
+            <CardContent className="p-4">
+                <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center gap-2 text-orange-400">
+                        <Zap className="w-4 h-4" />
+                        <span className="text-xs font-bold uppercase tracking-wider">MICRO PIPELINE OUTPUT</span>
+                    </div>
+                    <div className="flex items-center gap-2 text-[10px]">
+                        <span className="text-green-400 font-bold">{executeReady.length} EXECUTE</span>
+                        <span className="text-yellow-400">{waiting.length} WAIT</span>
+                    </div>
+                </div>
+
+                {executeReady.length > 0 && (
+                    <div className="space-y-2">
+                        <div className="text-[10px] text-green-500 uppercase flex items-center gap-1">
+                            <CheckCircle2 className="w-3 h-3" /> Ready to Execute (Full Pipeline ✓)
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
+                            {executeReady.slice(0, 6).map((s) => (
+                                <div 
+                                    key={s.symbol}
+                                    onClick={() => onSelectAsset(s.displaySymbol)}
+                                    className="bg-green-950/30 border border-green-500/30 rounded p-2 cursor-pointer hover:bg-green-950/50 transition-colors"
+                                >
+                                    <div className="flex items-center justify-between">
+                                        <div className="flex items-center gap-2">
+                                            {s.setup?.direction === 'LONG' ? (
+                                                <ArrowUp className="w-4 h-4 text-green-400" />
+                                            ) : (
+                                                <ArrowDown className="w-4 h-4 text-red-400" />
+                                            )}
+                                            <span className="font-bold text-gray-200">{s.displaySymbol}</span>
+                                        </div>
+                                        <span className={cn("text-[10px] font-bold px-1.5 py-0.5 rounded",
+                                            s.setup?.confidence === 'HIGH' ? 'bg-green-500/20 text-green-400' :
+                                            s.setup?.confidence === 'MEDIUM' ? 'bg-yellow-500/20 text-yellow-400' :
+                                            'bg-gray-500/20 text-gray-400'
+                                        )}>
+                                            {s.setup?.confidence}
+                                        </span>
+                                    </div>
+                                    <div className="mt-1 text-[10px] text-gray-400">
+                                        {s.setup?.type} | R:R {s.setup?.riskReward.toFixed(1)} | Score {s.setup?.technicalScore}
+                                    </div>
+                                    <div className="mt-1 text-[10px] text-gray-500 truncate">
+                                        {s.setup?.confluences.slice(0, 2).join(' • ')}
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                )}
+
+                {waiting.length > 0 && executeReady.length > 0 && <div className="border-t border-gray-800 my-3" />}
+
+                {waiting.length > 0 && (
+                    <div className="space-y-2">
+                        <div className="text-[10px] text-yellow-500 uppercase flex items-center gap-1">
+                            <AlertTriangle className="w-3 h-3" /> Waiting for Confirmation
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                            {waiting.slice(0, 8).map((s) => (
+                                <span 
+                                    key={s.symbol}
+                                    onClick={() => onSelectAsset(s.displaySymbol)}
+                                    className="text-[10px] bg-yellow-500/10 border border-yellow-500/30 text-yellow-400 px-2 py-1 rounded cursor-pointer hover:bg-yellow-500/20"
+                                >
+                                    {s.displaySymbol} ({s.setup?.type})
+                                </span>
+                            ))}
+                        </div>
+                    </div>
+                )}
+            </CardContent>
+        </Card>
+    );
+};
+
 // --- FOCUS 24H PANEL (Meso → Micro) ---
 const Focus24hPanel = ({ mesoData }: { 
     mesoData: {
@@ -1205,6 +1311,25 @@ export const CommandView = () => {
         marketBias: 'RISK_ON' | 'RISK_OFF' | 'NEUTRAL';
     } | null>(null);
 
+    // MICRO LAYER STATE (Setups from technical analysis)
+    const [microSetups, setMicroSetups] = useState<{
+        symbol: string;
+        displaySymbol: string;
+        action: 'EXECUTE' | 'WAIT' | 'AVOID';
+        setup: {
+            type: string;
+            direction: 'LONG' | 'SHORT';
+            entry: number;
+            stopLoss: number;
+            takeProfit1: number;
+            riskReward: number;
+            confidence: 'HIGH' | 'MEDIUM' | 'LOW';
+            confluences: string[];
+            thesis: string;
+            technicalScore: number;
+        } | null;
+    }[]>([]);
+
     // TOGGLE SELECTION
     const toggleSelection = (symbol: string, e: React.MouseEvent) => {
         e.stopPropagation();
@@ -1471,19 +1596,21 @@ export const CommandView = () => {
         return () => clearInterval(interval);
     }, [fetchData]);
 
-    // FETCH REGIME + MESO
+    // FETCH REGIME + MESO + MICRO (Full Pipeline)
     useEffect(() => {
         let alive = true;
-        const fetchRegimeAndMeso = async () => {
+        const fetchFullPipeline = async () => {
             try {
-                // Fetch both in parallel
-                const [regimeRes, mesoRes] = await Promise.all([
+                // Fetch all three in parallel
+                const [regimeRes, mesoRes, microRes] = await Promise.all([
                     fetch('/api/regime', { cache: 'no-store' }),
-                    fetch('/api/meso', { cache: 'no-store' })
+                    fetch('/api/meso', { cache: 'no-store' }),
+                    fetch('/api/micro', { cache: 'no-store' })
                 ]);
                 
                 const regimeData = await regimeRes.json();
                 const mesoDataRes = await mesoRes.json();
+                const microDataRes = await microRes.json();
                 
                 if (alive && regimeData.success && regimeData.snapshot) {
                     setRegime(regimeData.snapshot as RegimeSnapshot);
@@ -1500,14 +1627,25 @@ export const CommandView = () => {
                         marketBias: mesoDataRes.executiveSummary?.marketBias || 'NEUTRAL',
                     });
                 }
+                
+                // Process MICRO setups
+                if (alive && microDataRes.success && Array.isArray(microDataRes.analyses)) {
+                    const setups = microDataRes.analyses.map((a: { symbol: string; displaySymbol: string; recommendation: { action: string; bestSetup: unknown }; setups: unknown[] }) => ({
+                        symbol: a.symbol,
+                        displaySymbol: a.displaySymbol,
+                        action: a.recommendation.action as 'EXECUTE' | 'WAIT' | 'AVOID',
+                        setup: a.recommendation.bestSetup || (a.setups.length > 0 ? a.setups[0] : null),
+                    }));
+                    setMicroSetups(setups);
+                }
             } catch (e) {
-                console.error('Regime/Meso fetch error', e);
+                console.error('Pipeline fetch error', e);
             } finally {
                 if (alive) setRegimeLoading(false);
             }
         };
-        fetchRegimeAndMeso();
-        const interval = setInterval(fetchRegimeAndMeso, 60000); // Sync with market data
+        fetchFullPipeline();
+        const interval = setInterval(fetchFullPipeline, 60000); // Sync with market data
         return () => { alive = false; clearInterval(interval); };
     }, []);
 
@@ -1589,6 +1727,9 @@ export const CommandView = () => {
 
             {/* 0.5. FOCUS 24H (Meso → Micro) */}
             <Focus24hPanel mesoData={mesoData} />
+
+            {/* 0.6. MICRO PIPELINE OUTPUT (Setups prontos) */}
+            <MicroSetupsPanel setups={microSetups} onSelectAsset={setSelectedScannerAsset} />
 
             {/* 1. EXECUTION STATUS (Micro-Capital) */}
             <ExecutionStatusPanel />
