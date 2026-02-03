@@ -5,7 +5,7 @@ import { serverLog } from '@/lib/serverLogs';
 // Cache for regime snapshot (avoid recalculating on every request)
 let cachedSnapshot: RegimeSnapshot | null = null;
 let cacheTimestamp: number = 0;
-const CACHE_TTL_MS = 30_000; // 30 seconds
+const CACHE_TTL_MS = 15_000; // 15 seconds for real-time
 
 // Fetch macro data from our own market API
 async function fetchMacroInputs(): Promise<MacroInputs> {

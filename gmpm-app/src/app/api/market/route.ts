@@ -245,7 +245,7 @@ async function fetchYahooQuote(symbol: string): Promise<QuoteData | null> {
 
         const response = await fetch(url, {
             headers: { 'User-Agent': 'Mozilla/5.0' },
-            next: { revalidate: 60 },
+            next: { revalidate: 10 },
         });
 
         if (!response.ok) return null;

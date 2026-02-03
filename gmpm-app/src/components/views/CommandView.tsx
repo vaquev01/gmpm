@@ -1745,7 +1745,7 @@ export const CommandView = () => {
 
     useEffect(() => {
         fetchData();
-        const interval = setInterval(fetchData, 60000); // Poll every 60s
+        const interval = setInterval(fetchData, 15000); // Poll every 15s for real-time
         return () => clearInterval(interval);
     }, [fetchData]);
 
@@ -1798,7 +1798,7 @@ export const CommandView = () => {
             }
         };
         fetchFullPipeline();
-        const interval = setInterval(fetchFullPipeline, 60000); // Sync with market data
+        const interval = setInterval(fetchFullPipeline, 30000); // Sync every 30s
         return () => { alive = false; clearInterval(interval); };
     }, []);
 
