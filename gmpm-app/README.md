@@ -1,36 +1,91 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# GMPM - Global Macro Portfolio Manager
+
+Professional-grade trading scanner with institutional framework alignment.
+
+## Features
+
+### Regime Engine (6 Axes)
+- **G** - Growth (GDP, employment, consumer sentiment)
+- **I** - Inflation (CPI, yield curve)
+- **L** - Liquidity (VIX, Fed balance sheet proxy)
+- **C** - Credit (HY spreads, credit conditions)
+- **D** - Dollar (DXY strength)
+- **V** - Volatility (VIX levels and changes)
+
+### Trade Gates
+- **MACRO** - Regime alignment check
+- **MESO** - Sector/asset class tilts
+- **MICRO** - Individual asset quality
+- **RISK** - Position sizing and exposure
+- **EXEC** - Execution timing (session quality)
+
+### Data Sources (Real)
+- Yahoo Finance (equities, forex, crypto, commodities)
+- FRED API (Treasury yields, Fed Funds, economic indicators)
+- CNN Fear/Greed Index
+- News feeds (geopolitics, tech, headlines)
 
 ## Getting Started
 
-First, run the development server:
-
 ```bash
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3001](http://localhost:3001)
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Scripts
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```bash
+npm run dev        # Development server
+npm run build      # Production build
+npm run lint       # ESLint check
+npm run smoke      # API smoke tests
+npm run test:e2e   # Playwright E2E tests (10 tests)
+```
 
-## Learn More
+## API Endpoints
 
-To learn more about Next.js, take a look at the following resources:
+| Endpoint | Description |
+|----------|-------------|
+| `/api/market` | Real-time market data with quality scoring |
+| `/api/regime` | Regime snapshot (6 axes + gates) |
+| `/api/fred` | FRED economic data |
+| `/api/news` | News feeds (geo, tech, headlines) |
+| `/api/calendar` | Economic calendar |
+| `/api/server-logs` | Server-side logging |
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Pages
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+| Route | Description |
+|-------|-------------|
+| `/` | Main scanner (CommandView) |
+| `/verify` | System health checks (7 APIs) |
+| `/logs` | Server logs viewer |
 
-## Deploy on Vercel
+## Architecture
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+```
+src/
+├── app/
+│   ├── api/           # API routes
+│   ├── logs/          # Logs page
+│   └── verify/        # Health check page
+├── components/
+│   ├── views/         # Main views (CommandView, MacroView)
+│   └── ui/            # Shadcn components
+├── lib/
+│   ├── regimeEngine.ts    # Regime classification + gates
+│   ├── signalTracker.ts   # Signal tracking with attribution
+│   └── continuousLearning.ts # Learning system
+└── tests/             # Playwright E2E tests
+```
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Tech Stack
+
+- Next.js 15
+- React 19
+- Tailwind CSS
+- Shadcn/ui
+- Zustand (state)
+- Playwright (E2E tests)
