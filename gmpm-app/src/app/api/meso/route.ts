@@ -54,33 +54,94 @@ async function fetchMarketData(): Promise<{ assets: MarketAsset[], macro: MacroD
 const ASSET_CLASSES = {
     stocks: {
         name: 'Equities',
-        sectors: ['Technology', 'Financials', 'Healthcare', 'Consumer', 'Energy', 'Industrials'],
-        symbols: ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'NVDA', 'META', 'JPM', 'V', 'JNJ', 'XOM'],
-        benchmarks: ['^GSPC', '^DJI', '^IXIC'],
+        sectors: ['Technology', 'Financials', 'Healthcare', 'Consumer', 'Energy', 'Industrials', 'Materials', 'Utilities'],
+        symbols: [
+            // Tech (20)
+            'AAPL', 'MSFT', 'GOOGL', 'AMZN', 'META', 'NVDA', 'TSLA', 'AMD', 'INTC', 'CRM',
+            'ADBE', 'NFLX', 'PYPL', 'SHOP', 'SQ', 'UBER', 'ABNB', 'SNOW', 'NOW', 'PANW',
+            // Finance (15)
+            'JPM', 'BAC', 'WFC', 'GS', 'MS', 'C', 'BLK', 'SCHW', 'USB', 'PNC',
+            'V', 'MA', 'AXP', 'COF', 'DFS',
+            // Healthcare (10)
+            'JNJ', 'PFE', 'UNH', 'MRK', 'ABBV', 'TMO', 'ABT', 'LLY', 'BMY', 'AMGN',
+            // Consumer (10)
+            'WMT', 'HD', 'COST', 'NKE', 'SBUX', 'MCD', 'DIS', 'CMCSA', 'TGT', 'LOW',
+            // Industrial (10)
+            'CAT', 'DE', 'HON', 'UPS', 'BA', 'GE', 'LMT', 'RTX', 'MMM', 'UNP',
+            // Energy (10)
+            'XOM', 'CVX', 'COP', 'SLB', 'EOG', 'PXD', 'MPC', 'VLO', 'PSX', 'OXY',
+            // Telecom/Utilities (10)
+            'T', 'VZ', 'TMUS', 'NEE', 'DUK', 'SO', 'D', 'AEP', 'EXC', 'SRE',
+            // Materials (10)
+            'LIN', 'APD', 'ECL', 'SHW', 'FCX', 'NEM', 'NUE', 'DOW', 'DD', 'PPG',
+        ],
+        benchmarks: ['^GSPC', '^DJI', '^IXIC', '^RUT'],
     },
     crypto: {
         name: 'Crypto',
-        sectors: ['Layer 1', 'DeFi', 'Meme'],
-        symbols: ['BTC-USD', 'ETH-USD', 'SOL-USD', 'XRP-USD', 'DOGE-USD'],
-        benchmarks: ['BTC-USD'],
+        sectors: ['Layer 1', 'DeFi', 'Meme', 'Infrastructure'],
+        symbols: [
+            'BTC-USD', 'ETH-USD', 'BNB-USD', 'XRP-USD', 'ADA-USD',
+            'SOL-USD', 'DOGE-USD', 'DOT-USD', 'AVAX-USD', 'MATIC-USD',
+            'LINK-USD', 'UNI-USD', 'ATOM-USD', 'LTC-USD', 'ETC-USD',
+            'XLM-USD', 'ALGO-USD', 'VET-USD', 'HBAR-USD', 'FIL-USD',
+            'NEAR-USD', 'APT-USD', 'ICP-USD', 'EGLD-USD', 'SAND-USD',
+        ],
+        benchmarks: ['BTC-USD', 'ETH-USD'],
     },
     forex: {
         name: 'Forex',
-        sectors: ['Majors', 'Commodity FX', 'EM FX'],
-        symbols: ['EURUSD=X', 'GBPUSD=X', 'USDJPY=X', 'AUDUSD=X', 'USDCAD=X'],
+        sectors: ['Majors', 'Crosses', 'Commodity FX', 'EM FX'],
+        symbols: [
+            // Majors (7)
+            'EURUSD=X', 'GBPUSD=X', 'USDJPY=X', 'USDCHF=X', 'AUDUSD=X', 'USDCAD=X', 'NZDUSD=X',
+            // Crosses (19)
+            'EURGBP=X', 'EURJPY=X', 'GBPJPY=X', 'AUDJPY=X', 'EURAUD=X', 'EURCHF=X', 'GBPCHF=X',
+            'AUDCHF=X', 'CADJPY=X', 'CHFJPY=X', 'NZDJPY=X', 'GBPAUD=X', 'AUDNZD=X', 'EURCAD=X',
+            'GBPCAD=X', 'AUDCAD=X', 'NZDCAD=X', 'EURNZD=X', 'GBPNZD=X',
+            // EM (2)
+            'USDMXN=X', 'USDZAR=X',
+        ],
         benchmarks: ['DX=F'],
     },
     commodities: {
         name: 'Commodities',
         sectors: ['Metals', 'Energy', 'Agriculture'],
-        symbols: ['GC=F', 'SI=F', 'CL=F', 'NG=F', 'ZC=F'],
-        benchmarks: ['GC=F', 'CL=F'],
+        symbols: [
+            // Metals (5)
+            'GC=F', 'SI=F', 'PL=F', 'PA=F', 'HG=F',
+            // Energy (5)
+            'CL=F', 'BZ=F', 'NG=F', 'RB=F', 'HO=F',
+            // Agriculture (10)
+            'ZC=F', 'ZW=F', 'ZS=F', 'ZM=F', 'ZL=F', 'KC=F', 'SB=F', 'CC=F', 'CT=F', 'OJ=F',
+        ],
+        benchmarks: ['GC=F', 'CL=F', 'DX=F'],
     },
     bonds: {
         name: 'Fixed Income',
-        sectors: ['Treasuries', 'Corporate', 'High Yield'],
-        symbols: ['TLT', 'IEF', 'HYG', 'LQD', 'BND'],
-        benchmarks: ['^TNX'],
+        sectors: ['Treasuries', 'Corporate', 'High Yield', 'International'],
+        symbols: [
+            // Treasury ETFs
+            'TLT', 'IEF', 'SHY', 'TIP', 'BIL', 'GOVT',
+            // Corporate/HY
+            'LQD', 'HYG', 'JNK', 'EMB', 'VCIT', 'BND', 'AGG',
+        ],
+        benchmarks: ['^TNX', '^TYX'],
+    },
+    etfs: {
+        name: 'ETFs',
+        sectors: ['Equity', 'Sector', 'International', 'Commodity'],
+        symbols: [
+            // Equity
+            'SPY', 'QQQ', 'IWM', 'DIA', 'VOO', 'VTI', 'IVV', 'VTV', 'VUG', 'VIG',
+            // Sector
+            'XLF', 'XLE', 'XLK', 'XLV', 'XLI', 'XLU', 'XLP', 'XLY', 'XLB', 'XLRE',
+            // International
+            'EFA', 'EEM', 'VWO', 'VEA', 'IEMG', 'VGK', 'EWJ', 'FXI', 'EWZ', 'EWG',
+            // Commodity
+            'GLD', 'SLV', 'USO', 'UNG', 'DBA', 'DBC', 'PDBC', 'GLDM', 'IAU', 'SGOL',
+        ],
+        benchmarks: ['SPY', 'QQQ'],
     },
 };
 
@@ -327,6 +388,40 @@ function deriveClassExpectation(
 
         volatilityRisk = 'LOW';
         liquidityScore = 90;
+    }
+
+    // ETFs (follows broad market sentiment)
+    else if (assetClass === 'etfs') {
+        // ETFs follow regime closely
+        if (regimeType === 'GOLDILOCKS' || regimeType === 'REFLATION') {
+            expectation = 'BULLISH';
+            confidence = 'HIGH';
+            direction = 'LONG';
+            drivers.push('Risk-on regime favors equity ETFs');
+            topPicks.push('SPY', 'QQQ', 'IWM');
+        } else if (regimeType === 'RISK_OFF' || regimeType === 'DEFLATION') {
+            expectation = 'BEARISH';
+            direction = 'SHORT';
+            drivers.push('Risk-off regime');
+            topPicks.push('GLD', 'SLV'); // Safe haven ETFs
+            avoidList.push('High beta ETFs');
+        } else if (regimeType === 'STAGFLATION') {
+            expectation = 'MIXED';
+            drivers.push('Stagflation mixed for ETFs');
+            topPicks.push('XLE', 'GLD'); // Energy, Gold
+        }
+
+        // Liquidity factor
+        if (axes.L.direction === '↑↑' || axes.L.direction === '↑') {
+            liquidityScore = 80;
+            drivers.push('Liquidity supportive');
+        } else if (axes.L.direction === '↓↓') {
+            liquidityScore = 40;
+            drivers.push('Liquidity draining');
+        }
+
+        volatilityRisk = 'MEDIUM';
+        if (!direction || direction === 'AVOID') direction = 'LONG';
     }
 
     // Check regime tilts for this class
