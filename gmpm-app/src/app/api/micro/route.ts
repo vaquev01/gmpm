@@ -150,10 +150,13 @@ function calculateATR(highs: number[], lows: number[], closes: number[], period:
     return trs.reduce((a, b) => a + b, 0) / trs.length;
 }
 
-// Determine trend from price vs EMAs
+// Determine trend from price vs EMAs (more sensitive)
 function determineTrend(price: number, ema21: number, ema50: number): 'BULLISH' | 'BEARISH' | 'NEUTRAL' {
-    if (price > ema21 && ema21 > ema50) return 'BULLISH';
-    if (price < ema21 && ema21 < ema50) return 'BEARISH';
+    const threshold = price * 0.001; // 0.1% threshold
+    if (price > ema21 + threshold) return 'BULLISH';
+    if (price < ema21 - threshold) return 'BEARISH';
+    if (ema21 > ema50 + threshold) return 'BULLISH';
+    if (ema21 < ema50 - threshold) return 'BEARISH';
     return 'NEUTRAL';
 }
 
@@ -306,8 +309,20 @@ function generateSetups(
     if (smc.premiumDiscount === 'DISCOUNT' && mesoDirection === 'LONG') technicalScore += 10;
     if (smc.premiumDiscount === 'PREMIUM' && mesoDirection === 'SHORT') technicalScore += 10;
     
-    // Only generate setups if score is decent
-    if (technicalScore < 60 || confluences.length < 2) {
+    // Add more confluences based on available data
+    if (indicators.rsi > 50 && mesoDirection === 'LONG') confluences.push('RSI bullish bias');
+    if (indicators.rsi < 50 && mesoDirection === 'SHORT') confluences.push('RSI bearish bias');
+    if (indicators.bbPosition === 'LOWER' && mesoDirection === 'LONG') confluences.push('Bollinger lower band');
+    if (indicators.bbPosition === 'UPPER' && mesoDirection === 'SHORT') confluences.push('Bollinger upper band');
+    if (trend.h4 !== 'NEUTRAL') confluences.push(`H4 ${trend.h4.toLowerCase()}`);
+    if (smc.liquidityPools.length > 0) confluences.push('Liquidity pool nearby');
+    
+    // Add score for meso direction alignment
+    if (mesoDirection === 'LONG' && indicators.rsi > 40 && indicators.rsi < 70) technicalScore += 5;
+    if (mesoDirection === 'SHORT' && indicators.rsi > 30 && indicators.rsi < 60) technicalScore += 5;
+    
+    // Relax criteria - generate setups with lower threshold
+    if (technicalScore < 55 || confluences.length < 1) {
         return [];
     }
     
@@ -319,21 +334,17 @@ function generateSetups(
     if (smc.fvgs.length > 0 && !smc.fvgs[0].filled) setupType = 'LIQUIDITY_GRAB';
     
     // Calculate entry, SL, TPs based on direction
+    // SL = 1 ATR, TP1 = 2 ATR (R:R = 2:1)
     const isLong = mesoDirection === 'LONG';
     const entry = price;
-    const stopLoss = isLong ? entry - atr * 1.5 : entry + atr * 1.5;
+    const stopLoss = isLong ? entry - atr : entry + atr;
     const tp1 = isLong ? entry + atr * 2 : entry - atr * 2;
-    const tp2 = isLong ? entry + atr * 3.5 : entry - atr * 3.5;
-    const tp3 = isLong ? entry + atr * 5 : entry - atr * 5;
+    const tp2 = isLong ? entry + atr * 3 : entry - atr * 3;
+    const tp3 = isLong ? entry + atr * 4 : entry - atr * 4;
     
     const risk = Math.abs(entry - stopLoss);
     const reward = Math.abs(tp1 - entry);
-    const riskReward = risk > 0 ? reward / risk : 0;
-    
-    // Only add setup if R:R >= 2
-    if (riskReward < 2) {
-        return [];
-    }
+    const riskReward = risk > 0 ? reward / risk : 2; // Default to 2 if no risk
     
     const confidence: Setup['confidence'] = technicalScore >= 80 ? 'HIGH' :
         technicalScore >= 65 ? 'MEDIUM' : 'LOW';
@@ -386,10 +397,11 @@ function generateRecommendation(setups: Setup[]): {
     const sorted = [...setups].sort((a, b) => b.technicalScore - a.technicalScore);
     const best = sorted[0];
     
-    if (best.confidence === 'HIGH' && best.mesoAlignment) {
+    // EXECUTE if: HIGH confidence OR (MEDIUM with 3+ confluences)
+    if (best.confidence === 'HIGH' || (best.confidence === 'MEDIUM' && best.confluences.length >= 3)) {
         return {
             action: 'EXECUTE',
-            reason: `High confidence ${best.type} setup with MESO alignment. ${best.confluences.length} confluences.`,
+            reason: `${best.confidence} confidence ${best.type} setup. ${best.confluences.length} confluences. R:R ${best.riskReward.toFixed(1)}.`,
             bestSetup: best,
         };
     }
@@ -397,7 +409,7 @@ function generateRecommendation(setups: Setup[]): {
     if (best.confidence === 'MEDIUM') {
         return {
             action: 'WAIT',
-            reason: `Medium confidence setup. Wait for more confirmation or better entry.`,
+            reason: `Medium confidence, ${best.confluences.length} confluences. Await more confirmation.`,
             bestSetup: best,
         };
     }
