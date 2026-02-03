@@ -103,6 +103,8 @@ interface AdaptiveContext {
 }
 
 // Calculate adaptive multipliers based on MACRO/MESO context
+// REALISTIC TARGETS: With ATR capped at 0.3-2% of price, multipliers give:
+// SL: 0.5 * 1% = 0.5% risk, TP1: 1.0 * 1% = 1% reward (R:R 2:1)
 function getAdaptiveMultipliers(context: AdaptiveContext, technical: TechnicalAnalysis): {
     slMultiplier: number;
     tp1Multiplier: number;
@@ -110,62 +112,57 @@ function getAdaptiveMultipliers(context: AdaptiveContext, technical: TechnicalAn
     tp3Multiplier: number;
     useStructuralLevels: boolean;
 } {
-    let slMultiplier = 1.0;
-    let tp1Multiplier = 2.0;
-    let tp2Multiplier = 3.0;
-    let tp3Multiplier = 4.0;
+    // Base multipliers for conservative intraday/swing trading
+    let slMultiplier = 0.5;   // 0.5 ATR stop (0.15% - 1% of price)
+    let tp1Multiplier = 1.0;  // 1.0 ATR target (R:R 2:1)
+    let tp2Multiplier = 1.5;  // 1.5 ATR extended
+    let tp3Multiplier = 2.0;  // 2.0 ATR runner
     
     // MACRO REGIME ADJUSTMENTS
-    // High conviction regimes = wider targets, tighter stops
     if (context.regime === 'GOLDILOCKS' || context.regime === 'REFLATION') {
-        tp1Multiplier = 2.5;
-        tp2Multiplier = 4.0;
-        tp3Multiplier = 6.0;
-        slMultiplier = 0.8; // Tighter stop in favorable regime
-    } else if (context.regime === 'RISK_OFF' || context.regime === 'LIQUIDITY_DRAIN') {
-        tp1Multiplier = 1.5; // Conservative targets
-        tp2Multiplier = 2.0;
+        // High conviction: slightly wider targets
+        tp1Multiplier = 1.2;
+        tp2Multiplier = 1.8;
         tp3Multiplier = 2.5;
-        slMultiplier = 1.2; // Wider stop for volatility
+        slMultiplier = 0.5;
+    } else if (context.regime === 'RISK_OFF' || context.regime === 'LIQUIDITY_DRAIN') {
+        // Conservative: tighter targets, wider stops
+        tp1Multiplier = 0.8;
+        tp2Multiplier = 1.2;
+        tp3Multiplier = 1.5;
+        slMultiplier = 0.7;
     } else if (context.regime === 'STAGFLATION') {
-        tp1Multiplier = 2.0;
-        tp2Multiplier = 3.0;
-        tp3Multiplier = 4.0;
-        slMultiplier = 1.5; // Extra wide for uncertainty
+        // Uncertain: balanced approach
+        tp1Multiplier = 1.0;
+        tp2Multiplier = 1.5;
+        tp3Multiplier = 2.0;
+        slMultiplier = 0.6;
     }
     
-    // MESO CLASS CONFIDENCE ADJUSTMENTS
+    // MESO CLASS CONFIDENCE ADJUSTMENTS (smaller impact)
     if (context.classConfidence === 'HIGH') {
-        tp1Multiplier *= 1.2; // Extend targets for high conviction
-        tp2Multiplier *= 1.2;
-        tp3Multiplier *= 1.2;
+        tp1Multiplier *= 1.1;
+        tp2Multiplier *= 1.1;
     } else if (context.classConfidence === 'LOW') {
-        tp1Multiplier *= 0.8; // Reduce targets for low conviction
-        tp2Multiplier *= 0.8;
-        tp3Multiplier *= 0.8;
-        slMultiplier *= 1.2; // Wider stop
+        tp1Multiplier *= 0.9;
+        slMultiplier *= 1.1;
     }
     
     // VOLATILITY CONTEXT ADJUSTMENTS
     if (context.volatilityContext === 'HIGH') {
-        slMultiplier *= 1.3; // Wider stops in high vol
-        tp1Multiplier *= 1.2; // But also bigger moves possible
+        slMultiplier *= 1.2;
     } else if (context.volatilityContext === 'LOW') {
-        slMultiplier *= 0.8; // Tighter stops in low vol
-        tp1Multiplier *= 0.9; // Smaller targets
+        slMultiplier *= 0.9;
     }
     
     // MICRO TECHNICAL ADJUSTMENTS
-    // If trend is strongly aligned, extend targets
     if (technical.trend.alignment === 'ALIGNED') {
-        tp2Multiplier *= 1.15;
-        tp3Multiplier *= 1.2;
+        tp2Multiplier *= 1.1;
+        tp3Multiplier *= 1.15;
     }
     
-    // If volume is climactic, tighten targets (potential exhaustion)
     if (technical.volume.climax) {
-        tp1Multiplier *= 0.85;
-        tp2Multiplier *= 0.8;
+        tp1Multiplier *= 0.9;
     }
     
     // Use structural levels if SMC data is strong
@@ -398,9 +395,12 @@ function generateTechnicalAnalysis(
     const alignment = h4Trend === h1Trend && h1Trend === m15Trend ? 'ALIGNED' :
         h4Trend === h1Trend || h1Trend === m15Trend ? 'PARTIAL' : 'CONFLICTING';
     
-    // Structure analysis
+    // Structure analysis - ATR normalized as percentage of price
     const dailyRange = high - low;
-    const atr = dailyRange > 0 ? dailyRange : price * 0.01;
+    const dailyRangePercent = price > 0 ? (dailyRange / price) : 0.01;
+    // Cap ATR between 0.3% and 2% of price for realistic targets
+    const atrPercent = Math.max(0.003, Math.min(0.02, dailyRangePercent));
+    const atr = price * atrPercent;
     
     // RSI divergence (simplified)
     const rsiDivergence = rsi < 30 && price > ema21 ? 'BULLISH' :
