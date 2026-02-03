@@ -1840,6 +1840,15 @@ export const CommandView = () => {
             volume: { relative: number; trend: string; climax: boolean };
             smc: { orderBlocks: { type: string; low: number; high: number }[]; fvgs: { type: string }[]; liquidityPools: { type: string; level: number }[]; premiumDiscount: string };
         };
+        scenarioAnalysis?: {
+            status: 'PRONTO' | 'DESENVOLVENDO' | 'CONTRA';
+            statusReason: string;
+            technicalAlignment: number;
+            entryQuality: 'OTIMO' | 'BOM' | 'RUIM';
+            timing: string;
+            blockers: string[];
+            catalysts: string[];
+        };
     }[]>([]);
 
     // TOGGLE SELECTION
@@ -2202,13 +2211,14 @@ export const CommandView = () => {
                     }));
                     setMicroSetups(setups);
                     
-                    // Store full analyses for expanded view
+                    // Store full analyses for expanded view (including scenarioAnalysis)
                     // eslint-disable-next-line @typescript-eslint/no-explicit-any
                     const analyses = microDataRes.analyses.map((a: any) => ({
                         symbol: a.symbol,
                         displaySymbol: a.displaySymbol,
                         price: a.price,
                         technical: a.technical,
+                        scenarioAnalysis: a.scenarioAnalysis,
                     }));
                     setMicroAnalyses(analyses);
                 }
