@@ -66,6 +66,8 @@ interface ScoredAsset extends RealAssetData {
     tp: string;
     sl: string;
     rr: string;
+    timeframe: string;      // H4, H1, M15
+    confluenceCount: number; // Number of confluences > 60
     rvol: number; // Relative Volume
     volatility: number; // Real volatility
     oneLiner: string;   // Generated thesis
@@ -1589,14 +1591,35 @@ export const CommandView = () => {
                     const rvol = confluence.rvol;
                     const oneLiner = confluence.oneLiner;
 
-                    // Professional Execution Levels (Using High/Low Volatility)
-                    // If no high/low (e.g. some indices), fallback to 1.5%
+                    // Professional Execution Levels (Dynamic R:R based on volatility)
                     const dailyRange = (asset.high && asset.low) ? (asset.high - asset.low) : (asset.price * 0.015);
                     const entry = asset.price;
-                    // SL is placed 1x ATR (Daily Range) away
-                    const sl = signal === 'LONG' ? entry - dailyRange : entry + dailyRange;
-                    // TP is placed 2x ATR away
-                    const tp = signal === 'LONG' ? entry + (dailyRange * 2) : entry - (dailyRange * 2);
+                    
+                    // Dynamic SL/TP based on asset class volatility
+                    const volMultiplier = asset.assetClass === 'crypto' ? 1.5 : 
+                        asset.assetClass === 'commodity' ? 1.2 : 1.0;
+                    const atr = dailyRange * volMultiplier;
+                    
+                    // SL: Tighter for high-score setups, wider for lower scores
+                    const slMultiplier = score > 70 ? 0.8 : score > 55 ? 1.0 : 1.2;
+                    const sl = signal === 'LONG' ? entry - (atr * slMultiplier) : entry + (atr * slMultiplier);
+                    
+                    // TP: Dynamic based on trend strength and volatility
+                    const tpMultiplier = score > 70 ? 2.5 : score > 55 ? 2.0 : 1.5;
+                    const tp = signal === 'LONG' ? entry + (atr * tpMultiplier) : entry - (atr * tpMultiplier);
+                    
+                    // Calculate actual R:R
+                    const risk = Math.abs(entry - sl);
+                    const reward = Math.abs(tp - entry);
+                    const rrValue = risk > 0 ? (reward / risk) : 0;
+                    
+                    // Determine timeframe based on volatility
+                    const timeframe = dailyRange / entry > 0.03 ? 'H4' : 
+                        dailyRange / entry > 0.015 ? 'H1' : 'M15';
+                    
+                    // Count confluences
+                    const confluenceCount = confluence.breakdown?.components ? 
+                        Object.values(confluence.breakdown.components).filter((v): v is number => typeof v === 'number' && v > 60).length : 0;
 
                     return {
                         ...asset,
@@ -1607,7 +1630,9 @@ export const CommandView = () => {
                         entry: entry < 10 ? entry.toFixed(4) : entry.toFixed(2),
                         sl: sl < 10 ? sl.toFixed(4) : sl.toFixed(2),
                         tp: tp < 10 ? tp.toFixed(4) : tp.toFixed(2),
-                        rr: '2.0',
+                        rr: rrValue.toFixed(1),
+                        timeframe,
+                        confluenceCount,
                         rvol,
                         volatility,
                         oneLiner,
@@ -2001,6 +2026,8 @@ export const CommandView = () => {
                                         <TableHead className="h-9 text-gray-400 font-bold text-center">Score</TableHead>
                                         <TableHead className="h-9 text-gray-400 font-bold">Trend</TableHead>
                                         <TableHead className="h-9 text-gray-400 font-bold">Signal</TableHead>
+                                        <TableHead className="h-9 text-cyan-500 font-bold">TF</TableHead>
+                                        <TableHead className="h-9 text-amber-500 font-bold">Conf</TableHead>
 
                                         <TableHead className="h-9 text-gray-300 font-bold border-l border-gray-800 pl-4">Entry</TableHead>
                                         <TableHead className="h-9 text-green-600 font-bold">Target</TableHead>
@@ -2072,11 +2099,28 @@ export const CommandView = () => {
                                                         {row.signal}
                                                     </span>
                                                 </TableCell>
+                                                <TableCell>
+                                                    <span className="text-[10px] font-mono text-cyan-400">{row.timeframe || 'H1'}</span>
+                                                </TableCell>
+                                                <TableCell>
+                                                    <span className={cn(
+                                                        "px-1.5 py-0.5 rounded text-[10px] font-bold",
+                                                        (row.confluenceCount || 0) >= 4 ? "bg-green-500/20 text-green-400" :
+                                                        (row.confluenceCount || 0) >= 2 ? "bg-amber-500/20 text-amber-400" : "bg-gray-500/20 text-gray-400"
+                                                    )}>
+                                                        {row.confluenceCount || 0}
+                                                    </span>
+                                                </TableCell>
 
                                                 <TableCell className="font-bold text-blue-300 border-l border-gray-800 pl-4">{row.entry}</TableCell>
                                                 <TableCell className="font-bold text-green-400">{row.tp}</TableCell>
                                                 <TableCell className="font-bold text-red-400">{row.sl}</TableCell>
-                                                <TableCell className="font-bold text-purple-400">{row.rr}</TableCell>
+                                                <TableCell className={cn(
+                                                    "font-bold",
+                                                    parseFloat(row.rr) >= 2.5 ? "text-green-400" :
+                                                    parseFloat(row.rr) >= 2.0 ? "text-purple-400" :
+                                                    parseFloat(row.rr) >= 1.5 ? "text-amber-400" : "text-red-400"
+                                                )}>{row.rr}</TableCell>
 
                                                 <TableCell className="text-right p-0 pr-2">
                                                     <Button variant="ghost" size="icon" className="h-6 w-6 hover:bg-blue-500/20 hover:text-blue-400">
