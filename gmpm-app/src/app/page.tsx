@@ -6,6 +6,7 @@ import { LabView } from '@/components/views/LabView';
 import { FactoryView } from '@/components/views/FactoryView';
 import { IncubatorView } from '@/components/views/IncubatorView';
 import { MacroView } from '@/components/views/MacroView';
+import { MesoView } from '@/components/views/MesoView';
 import { AssetUniverseView } from '@/components/views/AssetUniverseView';
 import { useStore } from '@/store/useStore';
 
@@ -18,6 +19,8 @@ export default function Home() {
         return <CommandView />;
       case 'macro':
         return <MacroView />;
+      case 'meso':
+        return <MesoView />;
       case 'lab':
         return <LabView />;
       case 'factory':

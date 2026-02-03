@@ -28,7 +28,8 @@ export const DashboardLayout = ({ children }: DashboardLayoutProps) => {
             title: '🔥 MAIN',
             items: [
                 { id: 'command' as ViewType, label: 'WORKSPACE' },
-                { id: 'macro' as ViewType, label: 'MACRO TRENDS' },
+                { id: 'macro' as ViewType, label: 'MACRO' },
+                { id: 'meso' as ViewType, label: 'MESO' },
             ]
         },
         {

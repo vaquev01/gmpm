@@ -144,6 +144,21 @@ async function main() {
   assert(Array.isArray(regime.snapshot.mesoTilts), '/api/regime missing mesoTilts array');
   assert(Array.isArray(regime.snapshot.mesoProhibitions), '/api/regime missing mesoProhibitions array');
 
+  // /api/meso should return meso analysis with classes and sectors
+  const { res: mesoRes, json: meso } = await getJson('/api/meso');
+  assert(mesoRes.ok, `/api/meso HTTP ${mesoRes.status}`);
+  assert(meso && meso.success === true, `/api/meso success=false: ${meso?.error || 'unknown error'}`);
+  assert(isRecord(meso.regime), '/api/meso missing regime object');
+  assert(Array.isArray(meso.classes), '/api/meso missing classes array');
+  assert(meso.classes.length > 0, '/api/meso returned 0 classes');
+  assert(Array.isArray(meso.sectors), '/api/meso missing sectors array');
+  assert(meso.sectors.length > 0, '/api/meso returned 0 sectors');
+  for (const cls of meso.classes) {
+    assert(typeof cls.name === 'string', '/api/meso class missing name');
+    assert(typeof cls.expectation === 'string', '/api/meso class missing expectation');
+    assert(typeof cls.liquidityScore === 'number', '/api/meso class missing liquidityScore');
+  }
+
   // /api/server-logs should be reachable, clearable, and then populated by market/news calls
   {
     const clearRes = await fetch(`${baseUrl}/api/server-logs`, { method: 'DELETE' });
