@@ -2,6 +2,38 @@
 // API COMPLETA com TODOS os 278 ativos do PRD v8.1
 
 import { NextResponse } from 'next/server';
+import { serverLog } from '@/lib/serverLogs';
+
+type QuoteQualityStatus = 'OK' | 'PARTIAL' | 'STALE' | 'SUSPECT';
+
+type QuoteQuality = {
+    status: QuoteQualityStatus;
+    reasons: string[];
+    ageMin?: number;
+};
+
+let lastGoodSnapshot: {
+    payload: unknown;
+    timestamp: string;
+} | null = null;
+
+function summarizeQuality(quotes: QuoteData[]) {
+    const summary = quotes.reduce(
+        (acc, q) => {
+            const s = q.quality?.status || 'PARTIAL';
+            acc[s] = (acc[s] || 0) + 1;
+            return acc;
+        },
+        {} as Record<QuoteQualityStatus, number>
+    );
+
+    const total = quotes.length || 1;
+    const okPct = (summary.OK || 0) / total;
+    const suspectPct = (summary.SUSPECT || 0) / total;
+    const stalePct = (summary.STALE || 0) / total;
+
+    return { summary, total: quotes.length, okPct, suspectPct, stalePct };
+}
 
 // ===== UNIVERSO COMPLETO DE ATIVOS (278 total) =====
 const ASSETS = {
@@ -166,6 +198,9 @@ interface QuoteData {
     // Technical data for scoring
     atr?: number;
     rsi?: number;
+    quoteTimestamp?: string;
+    history?: number[];
+    quality?: QuoteQuality;
 }
 
 interface FearGreedData {
@@ -281,6 +316,11 @@ async function fetchYahooQuote(symbol: string): Promise<QuoteData | null> {
             rsi = 100 - (100 / (1 + rs));
         }
 
+        const history = closes.slice(-20).map((c: number) => c / scale);
+        const quoteTimestamp = (meta && typeof meta.regularMarketTime === 'number')
+            ? new Date(meta.regularMarketTime * 1000).toISOString()
+            : undefined;
+
         // Determine asset class
         let assetClass = 'stock';
         if (symbol.includes('-USD')) assetClass = 'crypto';
@@ -289,6 +329,53 @@ async function fetchYahooQuote(symbol: string): Promise<QuoteData | null> {
         else if (symbol.startsWith('^')) assetClass = 'index';
         else if (ASSETS.etfs.includes(symbol)) assetClass = 'etf';
         else if (ASSETS.bonds.includes(symbol)) assetClass = 'bond';
+
+        const sessionBound = assetClass === 'stock' || assetClass === 'etf' || assetClass === 'index' || assetClass === 'bond';
+        const marketState = (meta?.marketState ? String(meta.marketState) : '').toUpperCase();
+
+        let ageMin: number | undefined;
+        if (quoteTimestamp) {
+            const t = new Date(quoteTimestamp).getTime();
+            if (Number.isFinite(t)) ageMin = Math.max(0, Math.round((Date.now() - t) / 60000));
+        }
+
+        const reasons: string[] = [];
+        if (!Number.isFinite(currentPrice) || currentPrice <= 0) reasons.push('BAD_PRICE');
+        if (!Number.isFinite(previousClose) || previousClose <= 0) reasons.push('BAD_PREV_CLOSE');
+        if (!Number.isFinite(changePercent)) reasons.push('BAD_CHANGE');
+        if (!Number.isFinite((meta?.regularMarketDayHigh || 0)) || !Number.isFinite((meta?.regularMarketDayLow || 0))) reasons.push('BAD_HILO');
+        if (history.length < 8) reasons.push('SHORT_HISTORY');
+        if (!quoteTimestamp) reasons.push('NO_QUOTE_TIMESTAMP');
+
+        const dayHigh = (meta?.regularMarketDayHigh || currentPriceRaw) / scale;
+        const dayLow = (meta?.regularMarketDayLow || currentPriceRaw) / scale;
+        if (Number.isFinite(dayHigh) && Number.isFinite(dayLow) && dayHigh > 0 && dayLow > 0) {
+            if (dayHigh < dayLow) reasons.push('INVALID_RANGE');
+            // Price should typically lie within [low, high], allow small tolerance.
+            const tol = currentPrice * 0.03;
+            if (currentPrice > dayHigh + tol || currentPrice < dayLow - tol) reasons.push('PRICE_OUTSIDE_RANGE');
+        }
+
+        const absChg = Math.abs(changePercent);
+        const outlierThreshold = assetClass === 'crypto' ? 60 : assetClass === 'forex' ? 10 : assetClass === 'commodity' ? 25 : 35;
+        if (absChg > outlierThreshold) reasons.push('OUTLIER_CHANGE');
+
+        if (sessionBound) {
+            if (ageMin !== undefined && ageMin > 360) reasons.push('STALE');
+            if (marketState && marketState !== 'REGULAR') reasons.push(`MARKET_STATE_${marketState}`);
+        }
+
+        let status: QuoteQualityStatus = 'OK';
+        if (reasons.length === 0) status = 'OK';
+        else if (reasons.includes('OUTLIER_CHANGE') || reasons.includes('BAD_PRICE') || reasons.includes('BAD_PREV_CLOSE') || reasons.includes('BAD_CHANGE')) status = 'SUSPECT';
+        else if (reasons.includes('STALE') || reasons.some(r => r.startsWith('MARKET_STATE_'))) status = 'STALE';
+        else status = 'PARTIAL';
+
+        const quality: QuoteQuality = {
+            status,
+            reasons,
+            ageMin,
+        };
 
         const displaySymbol = symbol
             .replace('=X', '')
@@ -306,14 +393,17 @@ async function fetchYahooQuote(symbol: string): Promise<QuoteData | null> {
             changePercent,
             volume: meta.regularMarketVolume || 0,
             avgVolume, // ADDED: AvgVolume
-            high: (meta.regularMarketDayHigh || currentPriceRaw) / scale,
-            low: (meta.regularMarketDayLow || currentPriceRaw) / scale,
+            high: dayHigh,
+            low: dayLow,
             open: (meta.regularMarketOpen || previousCloseRaw) / scale,
             previousClose,
             marketState: meta.marketState || 'UNKNOWN',
             assetClass,
             atr,
             rsi,
+            quoteTimestamp,
+            history,
+            quality,
         };
     } catch {
         return null;
@@ -345,16 +435,30 @@ async function fetchFearGreed(): Promise<FearGreedData | null> {
 // ===== MAIN API HANDLER =====
 export async function GET(request: Request) {
     const { searchParams } = new URL(request.url);
+    const limit = parseInt(searchParams.get('limit') || '0', 10);
+    const assetClass = searchParams.get('class');
     const category = searchParams.get('category');
-    const limit = parseInt(searchParams.get('limit') || '0');
 
     const macroSymbols = ['^VIX', '^TNX', '^TYX', '^FVX', 'DX=F'];
+
+    const CLASS_TO_CATEGORY: Record<string, keyof typeof ASSETS> = {
+        stock: 'stocks',
+        etf: 'etfs',
+        forex: 'forex',
+        crypto: 'crypto',
+        commodity: 'commodities',
+        index: 'indices',
+        bond: 'bonds',
+    };
 
     try {
         let symbolsToFetch = ALL_SYMBOLS;
 
         if (category && category in ASSETS) {
             symbolsToFetch = ASSETS[category as keyof typeof ASSETS];
+        } else if (assetClass && assetClass in CLASS_TO_CATEGORY) {
+            const mapped = CLASS_TO_CATEGORY[assetClass];
+            symbolsToFetch = ASSETS[mapped];
         }
 
         if (limit > 0) {
@@ -373,6 +477,70 @@ export async function GET(request: Request) {
             const results = await Promise.all(batch.map(fetchYahooQuote));
             allQuotes.push(...results.filter((q): q is QuoteData => q !== null));
         }
+
+        const requestedCount = symbolsToFetch.length;
+        const coverage = requestedCount > 0 ? (allQuotes.length / requestedCount) : 0;
+        const degraded = coverage < 0.6;
+
+        const { summary: qualitySummary } = summarizeQuality(allQuotes);
+
+        const grouped = allQuotes.reduce((acc, q) => {
+            (acc[q.assetClass] ||= []).push(q);
+            return acc;
+        }, {} as Record<string, QuoteData[]>);
+
+        const tradeEnabledByClass: Record<string, boolean> = {};
+        const tradeDisabledReasonByClass: Record<string, string | null> = {};
+
+        const sessionBoundClasses = new Set(['stock', 'etf', 'index', 'bond']);
+        const allClasses = ['stock', 'etf', 'index', 'bond', 'crypto', 'forex', 'commodity'];
+
+        for (const cls of allClasses) {
+            const quotes = grouped[cls] || [];
+            if (degraded) {
+                tradeEnabledByClass[cls] = false;
+                tradeDisabledReasonByClass[cls] = 'DEGRADED_COVERAGE';
+                continue;
+            }
+            if (quotes.length === 0) {
+                tradeEnabledByClass[cls] = false;
+                tradeDisabledReasonByClass[cls] = 'NO_QUOTES';
+                continue;
+            }
+
+            const { okPct, suspectPct, stalePct } = summarizeQuality(quotes);
+
+            // Base fail-closed thresholds
+            if (suspectPct > 0.05) {
+                tradeEnabledByClass[cls] = false;
+                tradeDisabledReasonByClass[cls] = 'TOO_MANY_SUSPECT_QUOTES';
+                continue;
+            }
+            if (okPct < 0.6) {
+                tradeEnabledByClass[cls] = false;
+                tradeDisabledReasonByClass[cls] = 'INSUFFICIENT_OK_QUOTES';
+                continue;
+            }
+
+            // Session-bound markets: if many are stale, treat as market closed / not safe.
+            if (sessionBoundClasses.has(cls) && stalePct > 0.05) {
+                tradeEnabledByClass[cls] = false;
+                tradeDisabledReasonByClass[cls] = 'MARKET_CLOSED_OR_STALE';
+                continue;
+            }
+
+            // Always-on markets tolerate some STALE.
+            tradeEnabledByClass[cls] = true;
+            tradeDisabledReasonByClass[cls] = null;
+        }
+
+        const anyEnabled = Object.values(tradeEnabledByClass).some(Boolean);
+        const tradeEnabled = !degraded && anyEnabled;
+        const tradeDisabledReason = degraded
+            ? 'DEGRADED_COVERAGE'
+            : anyEnabled
+                ? null
+                : 'NO_TRADEABLE_CLASSES';
 
         // Get macro data
         const vixQuote = allQuotes.find(q => q.symbol === '^VIX');
@@ -424,18 +592,81 @@ export async function GET(request: Request) {
             avgChange: allQuotes.reduce((sum, q) => sum + q.changePercent, 0) / allQuotes.length,
         };
 
-        return NextResponse.json({
+        const payload = {
             success: true,
             timestamp: new Date().toISOString(),
+            degraded,
+            tradeEnabled,
+            tradeDisabledReason,
+            requestedCount,
+            coverage: Number.isFinite(coverage) ? Math.round(coverage * 1000) / 1000 : 0,
             count: allQuotes.length,
+            qualitySummary,
+            tradeEnabledByClass,
+            tradeDisabledReasonByClass,
             stats,
             macro,
             assets: allQuotes,
             data: allQuotes,
             byClass,
-        });
+        };
+
+        serverLog(
+            degraded || !tradeEnabled ? 'warn' : 'info',
+            'market_snapshot',
+            {
+                degraded,
+                tradeEnabled,
+                tradeDisabledReason,
+                requestedCount: payload.requestedCount,
+                count: payload.count,
+                coverage: payload.coverage,
+                qualitySummary: payload.qualitySummary,
+                tradeEnabledByClass: payload.tradeEnabledByClass,
+            },
+            'api/market'
+        );
+
+        if (!degraded && allQuotes.length > 0) {
+            lastGoodSnapshot = { payload, timestamp: payload.timestamp };
+        }
+
+        if (degraded && lastGoodSnapshot) {
+            serverLog('warn', 'market_snapshot_fallback', { reason: 'DEGRADED_FALLBACK', requestedCount, count: allQuotes.length, coverage }, 'api/market');
+            const last = lastGoodSnapshot.payload as Record<string, unknown>;
+            return NextResponse.json({
+                ...last,
+                degraded: true,
+                tradeEnabled: false,
+                tradeDisabledReason: 'DEGRADED_FALLBACK',
+                tradeEnabledByClass: {},
+                tradeDisabledReasonByClass: {},
+                fallback: true,
+                fallbackTimestamp: lastGoodSnapshot.timestamp,
+            });
+        }
+
+        return NextResponse.json(payload);
     } catch (error) {
         console.error('API Error:', error);
+
+        serverLog('error', 'market_snapshot_error', error, 'api/market');
+
+        if (lastGoodSnapshot) {
+            serverLog('warn', 'market_snapshot_fallback', { reason: 'ERROR_FALLBACK' }, 'api/market');
+            const last = lastGoodSnapshot.payload as Record<string, unknown>;
+            return NextResponse.json({
+                ...last,
+                degraded: true,
+                tradeEnabled: false,
+                tradeDisabledReason: 'ERROR_FALLBACK',
+                tradeEnabledByClass: {},
+                tradeDisabledReasonByClass: {},
+                fallback: true,
+                fallbackTimestamp: lastGoodSnapshot.timestamp,
+            });
+        }
+
         return NextResponse.json(
             { success: false, error: 'Failed to fetch market data' },
             { status: 500 }

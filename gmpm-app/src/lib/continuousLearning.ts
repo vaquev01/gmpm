@@ -12,6 +12,10 @@ export interface SignalOutcome {
     components: Record<string, number>;
     enhancedComponents?: Record<string, number>;
     regime: string;
+    regimeType?: string; // From RegimeSnapshot (GOLDILOCKS, RISK_ON, etc.)
+    sessionQuality?: 'OPTIMAL' | 'GOOD' | 'FAIR' | 'POOR'; // Trading session quality at entry
+    entryHourUTC?: number; // Hour of entry (0-23 UTC)
+    gatesAllPass?: boolean; // Whether all gates passed at entry
     outcome: 'WIN' | 'LOSS' | 'BREAKEVEN';
     pnlR: number;
     timestamp: number;

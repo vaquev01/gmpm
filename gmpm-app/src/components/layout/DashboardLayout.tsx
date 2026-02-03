@@ -1,10 +1,18 @@
 import React from 'react';
 import { useStore } from '@/store/useStore';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { ViewType } from '@/types';
-import { Play, BookOpen, Shield, LayoutDashboard } from 'lucide-react';
+import { LayoutDashboard, Settings } from 'lucide-react';
+import Link from 'next/link';
+import {
+    DropdownMenu,
+    DropdownMenuContent,
+    DropdownMenuItem,
+    DropdownMenuLabel,
+    DropdownMenuSeparator,
+    DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 
 interface DashboardLayoutProps {
     children: React.ReactNode;
@@ -13,10 +21,7 @@ interface DashboardLayoutProps {
 import { GlobalCommandPalette } from './GlobalCommandPalette';
 
 export const DashboardLayout = ({ children }: DashboardLayoutProps) => {
-    const { view, setView, assetUniverse, featureCategories } = useStore();
-
-    const totalAssets = assetUniverse.reduce((sum, a) => sum + a.count, 0);
-    const totalFeatures = featureCategories.reduce((sum, f) => sum + f.count, 0);
+    const { view, setView } = useStore();
 
     const menuGroups = [
         {
@@ -44,7 +49,7 @@ export const DashboardLayout = ({ children }: DashboardLayoutProps) => {
     return (
         <div className="min-h-screen bg-gray-950 text-gray-100 font-sans selection:bg-yellow-500/30">
             {/* COMPACT CONTROL BAR */}
-            <header className="sticky top-0 z-50 bg-gray-950/80 backdrop-blur-md border-b border-gray-800 h-14 flex items-center justify-between px-4 md:px-6">
+            <header className="sticky top-0 z-50 bg-gray-950/90 border-b border-gray-800 h-14 flex items-center justify-between px-4 md:px-6">
 
                 {/* Left: Branding */}
                 <div className="flex items-center gap-3">
@@ -79,6 +84,28 @@ export const DashboardLayout = ({ children }: DashboardLayoutProps) => {
                 {/* Right: System Status & Time */}
                 <div className="flex items-center gap-6 text-xs font-mono">
                     <GlobalCommandPalette />
+
+                    <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                            <Button variant="ghost" size="icon-sm" aria-label="Settings">
+                                <Settings className="w-4 h-4 text-gray-400" />
+                            </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="bg-gray-950 border-gray-800 text-gray-200">
+                            <DropdownMenuLabel className="text-xs text-gray-400">Settings</DropdownMenuLabel>
+                            <DropdownMenuSeparator className="bg-gray-800" />
+                            <DropdownMenuItem asChild>
+                                <Link href="/logs" className="cursor-pointer">
+                                    Logs
+                                </Link>
+                            </DropdownMenuItem>
+                            <DropdownMenuItem asChild>
+                                <Link href="/verify" className="cursor-pointer">
+                                    Verification
+                                </Link>
+                            </DropdownMenuItem>
+                        </DropdownMenuContent>
+                    </DropdownMenu>
 
                     <div className="hidden lg:flex items-center gap-4 pl-6 border-l border-gray-800 h-8">
                         {/* System Status Indicator */}

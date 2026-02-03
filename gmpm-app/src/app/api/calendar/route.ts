@@ -28,6 +28,7 @@ interface EconomicEvent {
 async function fetchUSEvents(): Promise<EconomicEvent[]> {
     // Use Federal Reserve Economic Data for US events
     const events: EconomicEvent[] = [];
+    const todayISO = new Date().toISOString().split('T')[0];
 
     try {
         if (!FRED_API_KEY) return events;
@@ -54,7 +55,8 @@ async function fetchUSEvents(): Promise<EconomicEvent[]> {
                     file_type: 'json',
                     limit: '1',
                     include_release_dates_with_no_data: 'true',
-                    sort_order: 'desc',
+                    sort_order: 'asc',
+                    realtime_start: todayISO,
                 }).toString();
 
                 // Get next release date
@@ -238,12 +240,13 @@ export async function GET(request: Request) {
     const { searchParams } = new URL(request.url);
     const days = parseInt(searchParams.get('days') || '7');
     const impactFilter = searchParams.get('impact')?.toUpperCase();
+    const includeEstimated = searchParams.get('include_estimated') === 'true';
 
     try {
         // Fetch from multiple sources
         const [fredEvents, scheduledEvents] = await Promise.all([
             fetchUSEvents(),
-            Promise.resolve(getScheduledEvents()),
+            includeEstimated ? Promise.resolve(getScheduledEvents()) : Promise.resolve([]),
         ]);
 
         // Combine and dedupe

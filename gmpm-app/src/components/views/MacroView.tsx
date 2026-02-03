@@ -29,6 +29,21 @@ interface MacroData {
     timestamp: string;
 }
 
+interface NewsItem {
+    title: string;
+    url: string;
+    source: string;
+    publishedAt?: string;
+}
+
+interface NewsData {
+    success: true;
+    timestamp: string;
+    geopolitics: NewsItem[];
+    technology: NewsItem[];
+    headlines: NewsItem[];
+}
+
 // --- TICKER COMPONENT ---
 const LiveTicker = ({ data }: { data: MacroData | null }) => {
     if (!data) return <div className="w-full bg-gray-900 border-y border-gray-800 py-2 h-8 animate-pulse" />;
@@ -110,6 +125,10 @@ export const MacroView = () => {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
 
+    const [news, setNews] = useState<NewsData | null>(null);
+    const [newsLoading, setNewsLoading] = useState(true);
+    const [newsError, setNewsError] = useState<string | null>(null);
+
     const fetchWithTimeout = async (url: string, timeoutMs: number) => {
         const controller = new AbortController();
         const id = setTimeout(() => controller.abort(), Math.max(1000, timeoutMs));
@@ -151,6 +170,53 @@ export const MacroView = () => {
         fetchData();
     }, []);
 
+    useEffect(() => {
+        let stopped = false;
+
+        const fetchNews = async () => {
+            try {
+                setNewsError(null);
+                const res = await fetchWithTimeout('/api/news?limit=10', 12000);
+                if (!res.ok) {
+                    const msg = `News feed error (/api/news): HTTP ${res.status}`;
+                    if (!stopped) {
+                        setNewsError(msg);
+                        setNews(null);
+                    }
+                    return;
+                }
+                const json = await res.json();
+                if (json && json.success) {
+                    if (!stopped) {
+                        setNews(json);
+                        setNewsError(null);
+                    }
+                } else {
+                    const msg = (json && json.error) ? String(json.error) : 'Unknown news feed error';
+                    if (!stopped) {
+                        setNewsError(msg);
+                        setNews(null);
+                    }
+                }
+            } catch (e) {
+                const msg = (e instanceof Error) ? e.message : String(e);
+                if (!stopped) {
+                    setNewsError(`Failed to fetch news: ${msg}`);
+                    setNews(null);
+                }
+            } finally {
+                if (!stopped) setNewsLoading(false);
+            }
+        };
+
+        fetchNews();
+        const interval = setInterval(fetchNews, 10 * 60 * 1000);
+        return () => {
+            stopped = true;
+            clearInterval(interval);
+        };
+    }, []);
+
     const institutional = (() => {
         try {
             return data ? analyzeInstitutionalMacro(data) : null;
@@ -161,12 +227,9 @@ export const MacroView = () => {
     })();
     const oracle = deriveOracleConclusion(data, institutional);
 
-    // MOCK DATA FOR MISSING SECTIONS
-    const geopoliticalData = [
-        { region: "Middle East", risks: ["Supply Chain Route Disruption", "Energy Price Volatility"], status: "CRITICAL", impact: "HIGH" },
-        { region: "Eastern Europe", risks: ["Protracted Conflict", "Commodity Constraints"], status: "STABLE_HIGH", impact: "MEDIUM" },
-        { region: "Asia-Pacific", risks: ["Trade Fragments", "Tech War"], status: "ELEVATED", impact: "MEDIUM" }
-    ];
+    const geoItems = news?.geopolitics ?? [];
+    const techItems = news?.technology ?? [];
+    const headlineItems = news?.headlines ?? [];
 
     return (
         <div className="space-y-6 max-w-[1700px] mx-auto pb-20">
@@ -430,36 +493,107 @@ export const MacroView = () => {
                                         <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
                                         <span className="relative inline-flex rounded-full h-3 w-3 bg-red-500"></span>
                                     </span>
-                                    <span className="text-xs font-mono text-red-400">STATIC</span>
+                                    <span className="text-xs font-mono text-red-400">{newsLoading ? 'LOADING' : newsError ? 'DEGRADED' : 'LIVE'}</span>
                                 </div>
                             </CardTitle>
                         </CardHeader>
                         <CardContent>
-                            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-                                {geopoliticalData.map((geo, i) => (
-                                    <div key={i} className="bg-gray-800/30 p-4 rounded border-l-4 border-red-900/50 relative group hover:bg-gray-800/50 transition-colors">
-                                        <div className="absolute top-2 right-2 flex gap-0.5">
-                                            {[1, 2, 3, 4, 5].map((level) => (
-                                                <div key={level} className={cn("w-1 h-3 rounded-full", (geo.status === 'CRITICAL' && level <= 5) ? "bg-red-500" : (geo.status === 'STABLE_HIGH' && level <= 4) ? "bg-orange-500" : (geo.status === 'ELEVATED' && level <= 3) ? "bg-yellow-500" : "bg-gray-700")} />
-                                            ))}
-                                        </div>
-                                        <div className="flex items-center gap-2 mb-3">
-                                            {geo.status === 'CRITICAL' && <ShieldAlert className="w-4 h-4 text-red-500 animate-pulse" />}
-                                            <div className="text-base font-bold text-gray-200">{geo.region}</div>
-                                        </div>
-                                        <div className="space-y-2">
-                                            {geo.risks.map((risk, j) => (
-                                                <div key={j} className="text-xs text-gray-400 flex items-center gap-2 border-l border-gray-700 pl-2">
-                                                    <Activity className="w-3 h-3 text-red-900" />
-                                                    {risk}
-                                                </div>
-                                            ))}
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
+                            {newsLoading ? (
+                                <div className="text-center py-8 text-gray-500">Syncing geopolitical headlines...</div>
+                            ) : geoItems.length === 0 ? (
+                                <div className="text-center py-8 text-gray-500">Geopolitical feed unavailable.</div>
+                            ) : (
+                                <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                                    {geoItems.slice(0, 8).map((item, i) => (
+                                        <a
+                                            key={`${item.url}-${i}`}
+                                            href={item.url}
+                                            target="_blank"
+                                            rel="noreferrer"
+                                            className="block bg-gray-800/30 p-4 rounded border border-gray-700/50 hover:bg-gray-800/50 transition-colors"
+                                        >
+                                            <div className="flex items-start justify-between gap-4">
+                                                <div className="text-sm font-bold text-gray-200 leading-snug">{item.title}</div>
+                                                <ShieldAlert className="w-4 h-4 text-red-500 shrink-0" />
+                                            </div>
+                                            <div className="mt-2 flex items-center justify-between text-[10px] text-gray-500 font-mono">
+                                                <span>{item.source}</span>
+                                                <span>{item.publishedAt ? new Date(item.publishedAt).toLocaleString() : '—'}</span>
+                                            </div>
+                                        </a>
+                                    ))}
+                                </div>
+                            )}
                         </CardContent>
                     </Card>
+
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                        <Card className="bg-gray-900/50 border-gray-800">
+                            <CardHeader>
+                                <CardTitle className="flex items-center gap-2 text-purple-400">
+                                    <Brain className="w-5 h-5" /> TECHNOLOGY WATCH
+                                </CardTitle>
+                                <CardDescription>Front-page signals from developer + tech ecosystem</CardDescription>
+                            </CardHeader>
+                            <CardContent className="space-y-3">
+                                {newsLoading ? (
+                                    <div className="text-center py-6 text-gray-500">Syncing tech feed...</div>
+                                ) : techItems.length === 0 ? (
+                                    <div className="text-center py-6 text-gray-500">Tech feed unavailable.</div>
+                                ) : (
+                                    techItems.slice(0, 8).map((item, i) => (
+                                        <a
+                                            key={`${item.url}-${i}`}
+                                            href={item.url}
+                                            target="_blank"
+                                            rel="noreferrer"
+                                            className="block p-3 bg-gray-950/40 border border-gray-800 rounded hover:bg-gray-950/60 transition-colors"
+                                        >
+                                            <div className="text-xs font-bold text-gray-200 leading-snug">{item.title}</div>
+                                            <div className="mt-1 flex items-center justify-between text-[10px] text-gray-500 font-mono">
+                                                <span>{item.source}</span>
+                                                <span>{item.publishedAt ? new Date(item.publishedAt).toLocaleString() : '—'}</span>
+                                            </div>
+                                        </a>
+                                    ))
+                                )}
+                                {newsError && <div className="text-[10px] text-yellow-400 font-mono break-words">{newsError}</div>}
+                            </CardContent>
+                        </Card>
+
+                        <Card className="bg-gray-900/50 border-gray-800">
+                            <CardHeader>
+                                <CardTitle className="flex items-center gap-2 text-blue-400">
+                                    <Globe className="w-5 h-5" /> NEWS HEADLINES
+                                </CardTitle>
+                                <CardDescription>Macro + markets headlines stream</CardDescription>
+                            </CardHeader>
+                            <CardContent className="space-y-3">
+                                {newsLoading ? (
+                                    <div className="text-center py-6 text-gray-500">Syncing headlines...</div>
+                                ) : headlineItems.length === 0 ? (
+                                    <div className="text-center py-6 text-gray-500">Headlines unavailable.</div>
+                                ) : (
+                                    headlineItems.slice(0, 8).map((item, i) => (
+                                        <a
+                                            key={`${item.url}-${i}`}
+                                            href={item.url}
+                                            target="_blank"
+                                            rel="noreferrer"
+                                            className="block p-3 bg-gray-950/40 border border-gray-800 rounded hover:bg-gray-950/60 transition-colors"
+                                        >
+                                            <div className="text-xs font-bold text-gray-200 leading-snug">{item.title}</div>
+                                            <div className="mt-1 flex items-center justify-between text-[10px] text-gray-500 font-mono">
+                                                <span>{item.source}</span>
+                                                <span>{item.publishedAt ? new Date(item.publishedAt).toLocaleString() : '—'}</span>
+                                            </div>
+                                        </a>
+                                    ))
+                                )}
+                                {newsError && <div className="text-[10px] text-yellow-400 font-mono break-words">{newsError}</div>}
+                            </CardContent>
+                        </Card>
+                    </div>
                 </TabsContent>
 
                 <TabsContent value="liquidity">
@@ -587,11 +721,38 @@ export const MacroView = () => {
                     })() : <div className="text-center text-gray-500">Loading Sentiment Data...</div>}
                 </TabsContent>
                 <TabsContent value="innovation">
-                    <div className="p-10 text-center text-gray-500 bg-gray-900/30 rounded border border-gray-800">
-                        <Rocket className="w-10 h-10 mx-auto mb-2 text-gray-600" />
-                        <h3 className="text-lg font-bold text-gray-300">Innovation Tracker</h3>
-                        <p>Fetching Patent & VC data...</p>
-                    </div>
+                    <Card className="bg-gray-900/50 border-gray-800">
+                        <CardHeader>
+                            <CardTitle className="flex items-center gap-2 text-purple-400">
+                                <Rocket className="w-5 h-5" /> INNOVATION & TECHNOLOGY
+                            </CardTitle>
+                            <CardDescription>Realtime proxy from developer + startup ecosystem (Hacker News)</CardDescription>
+                        </CardHeader>
+                        <CardContent className="space-y-3">
+                            {newsLoading ? (
+                                <div className="text-center py-10 text-gray-500">Loading innovation feed...</div>
+                            ) : techItems.length === 0 ? (
+                                <div className="text-center py-10 text-gray-500">Innovation feed unavailable.</div>
+                            ) : (
+                                techItems.slice(0, 12).map((item, i) => (
+                                    <a
+                                        key={`${item.url}-${i}`}
+                                        href={item.url}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                        className="block p-3 bg-gray-950/40 border border-gray-800 rounded hover:bg-gray-950/60 transition-colors"
+                                    >
+                                        <div className="text-sm font-bold text-gray-200 leading-snug">{item.title}</div>
+                                        <div className="mt-1 flex items-center justify-between text-[10px] text-gray-500 font-mono">
+                                            <span>{item.source}</span>
+                                            <span>{item.publishedAt ? new Date(item.publishedAt).toLocaleString() : '—'}</span>
+                                        </div>
+                                    </a>
+                                ))
+                            )}
+                            {newsError && <div className="text-[10px] text-yellow-400 font-mono break-words">{newsError}</div>}
+                        </CardContent>
+                    </Card>
                 </TabsContent>
             </Tabs>
         </div>

@@ -2,19 +2,15 @@
 
 import * as React from "react";
 import {
-    Calendar,
-    CreditCard,
     Settings,
-    User,
-    Calculator,
-    Smile,
     LayoutDashboard,
     FlaskConical,
     Factory,
     Zap,
-    TrendingUp,
-    Search
+    TrendingUp
 } from "lucide-react";
+
+import { useRouter } from "next/navigation";
 
 import {
     CommandDialog,
@@ -27,11 +23,11 @@ import {
     CommandShortcut,
 } from "@/components/ui/command";
 import { useStore } from "@/store/useStore";
-import { ViewType } from "@/types";
 
 export function GlobalCommandPalette() {
     const [open, setOpen] = React.useState(false);
     const { setView } = useStore();
+    const router = useRouter();
 
     React.useEffect(() => {
         const down = (e: KeyboardEvent) => {
@@ -53,7 +49,7 @@ export function GlobalCommandPalette() {
     return (
         <>
             {/* Hint for the user, hidden on mobile maybe or styled nicely */}
-            <div className="fixed bottom-4 right-4 z-50 pointer-events-none hidden md:flex items-center gap-2 text-xs text-gray-600 bg-gray-900/80 px-3 py-1.5 rounded-full border border-gray-800 backdrop-blur-md">
+            <div className="fixed bottom-4 right-4 z-50 pointer-events-none hidden md:flex items-center gap-2 text-xs text-gray-600 bg-gray-900/90 px-3 py-1.5 rounded-full border border-gray-800">
                 Press <kbd className="pointer-events-none inline-flex h-5 select-none items-center gap-1 rounded border border-gray-700 bg-gray-800 px-1.5 font-mono text-[10px] font-medium text-gray-400 opacity-100"><span className="text-xs">⌘</span>K</kbd> to command
             </div>
 
@@ -81,6 +77,17 @@ export function GlobalCommandPalette() {
                     </CommandGroup>
 
                     <CommandSeparator />
+
+                    <CommandGroup heading="Settings">
+                        <CommandItem onSelect={() => runCommand(() => router.push('/verify'))}>
+                            <Settings className="mr-2 h-4 w-4" />
+                            <span>Verification</span>
+                        </CommandItem>
+                        <CommandItem onSelect={() => runCommand(() => router.push('/logs'))}>
+                            <Settings className="mr-2 h-4 w-4" />
+                            <span>Logs</span>
+                        </CommandItem>
+                    </CommandGroup>
 
                     <CommandGroup heading="Quick Actions">
                         <CommandItem onSelect={() => runCommand(() => console.log('Simulating Buy...'))}>

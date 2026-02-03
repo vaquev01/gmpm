@@ -2,8 +2,15 @@
 // Sistema de tracking automático de sinais - monitora SL/TP em tempo real
 
 import { recordOutcome, type SignalOutcome } from './continuousLearning';
+import { updateSignalStatus } from './signalHistory';
 
 // ===== TIPOS =====
+export interface GateResultSummary {
+    gate: string;
+    status: 'PASS' | 'FAIL' | 'WARN' | 'SKIP';
+    reasons: string[];
+}
+
 export interface TrackedSignal {
     id: string;
     asset: string;
@@ -16,6 +23,9 @@ export interface TrackedSignal {
     components: Record<string, number>;
     enhancedComponents?: Record<string, number>;
     regime: string;
+    regimeType?: string; // From RegimeSnapshot
+    gates?: GateResultSummary[]; // Gate evaluation results
+    gatesAllPass?: boolean;
     status: 'ACTIVE' | 'HIT_SL' | 'HIT_TP1' | 'HIT_TP2' | 'HIT_TP3' | 'EXPIRED' | 'CANCELLED';
     currentPrice: number;
     currentPnL: number; // em R múltiplos
@@ -30,6 +40,152 @@ export interface TrackingState {
     signals: TrackedSignal[];
     lastUpdate: number;
     pollInterval: number; // ms
+}
+
+function applyPriceMapToSignals(state: TrackingState, priceMap: Record<string, number>, now: number): TrackedSignal[] {
+    const updated: TrackedSignal[] = [];
+
+    for (const signal of state.signals) {
+        if (signal.status !== 'ACTIVE') {
+            updated.push(signal);
+            continue;
+        }
+
+        const currentPrice = priceMap[signal.asset];
+        if (!currentPrice) {
+            updated.push(signal);
+            continue;
+        }
+
+        signal.currentPrice = currentPrice;
+
+        // Calculate PnL in R multiples
+        const slDistance = Math.abs(signal.entryPrice - signal.stopLoss);
+        const priceDiff = signal.direction === 'LONG'
+            ? currentPrice - signal.entryPrice
+            : signal.entryPrice - currentPrice;
+        signal.currentPnL = slDistance > 0 ? priceDiff / slDistance : 0;
+
+        // Check if expired
+        if (now > signal.expiresAt) {
+            signal.status = 'EXPIRED';
+            signal.closedAt = now;
+            signal.closedPrice = currentPrice;
+
+            // Record outcome with attribution data
+            const outcome: SignalOutcome = {
+                id: signal.id,
+                asset: signal.asset,
+                assetClass: signal.assetClass,
+                direction: signal.direction,
+                score: signal.score,
+                components: signal.components,
+                enhancedComponents: signal.enhancedComponents,
+                regime: signal.regime,
+                regimeType: signal.regimeType,
+                gatesAllPass: signal.gatesAllPass,
+                entryHourUTC: new Date(signal.createdAt).getUTCHours(),
+                outcome: signal.currentPnL > 0.5 ? 'WIN' : signal.currentPnL < -0.5 ? 'LOSS' : 'BREAKEVEN',
+                pnlR: signal.currentPnL,
+                timestamp: signal.createdAt,
+                exitTimestamp: now,
+            };
+            recordOutcome(outcome);
+
+            const finalStatus = signal.currentPnL > 0.5 ? 'WIN' : signal.currentPnL < -0.5 ? 'LOSS' : 'EXPIRED';
+            updateSignalStatus(signal.id, finalStatus, currentPrice, 'tracked_expired');
+        }
+        // Check SL hit
+        else if (
+            (signal.direction === 'LONG' && currentPrice <= signal.stopLoss) ||
+            (signal.direction === 'SHORT' && currentPrice >= signal.stopLoss)
+        ) {
+            signal.status = 'HIT_SL';
+            signal.closedAt = now;
+            signal.closedPrice = currentPrice;
+
+            const outcome: SignalOutcome = {
+                id: signal.id,
+                asset: signal.asset,
+                assetClass: signal.assetClass,
+                direction: signal.direction,
+                score: signal.score,
+                components: signal.components,
+                enhancedComponents: signal.enhancedComponents,
+                regime: signal.regime,
+                regimeType: signal.regimeType,
+                gatesAllPass: signal.gatesAllPass,
+                entryHourUTC: new Date(signal.createdAt).getUTCHours(),
+                outcome: 'LOSS',
+                pnlR: -1,
+                timestamp: signal.createdAt,
+                exitTimestamp: now,
+            };
+            recordOutcome(outcome);
+
+            updateSignalStatus(signal.id, 'LOSS', currentPrice, 'tracked_hit_sl');
+        }
+        // Check TP1
+        else if (
+            (signal.direction === 'LONG' && currentPrice >= signal.takeProfits[0]?.price) ||
+            (signal.direction === 'SHORT' && currentPrice <= signal.takeProfits[0]?.price)
+        ) {
+            // Check TP3 first (highest)
+            if (
+                signal.takeProfits[2] &&
+                ((signal.direction === 'LONG' && currentPrice >= signal.takeProfits[2].price) ||
+                    (signal.direction === 'SHORT' && currentPrice <= signal.takeProfits[2].price))
+            ) {
+                signal.status = 'HIT_TP3';
+                signal.tpHitLevel = 3;
+                signal.currentPnL = 4;
+            }
+            // Check TP2
+            else if (
+                signal.takeProfits[1] &&
+                ((signal.direction === 'LONG' && currentPrice >= signal.takeProfits[1].price) ||
+                    (signal.direction === 'SHORT' && currentPrice <= signal.takeProfits[1].price))
+            ) {
+                signal.status = 'HIT_TP2';
+                signal.tpHitLevel = 2;
+                signal.currentPnL = 2.5;
+            }
+            // TP1
+            else {
+                signal.status = 'HIT_TP1';
+                signal.tpHitLevel = 1;
+                signal.currentPnL = 1.5;
+            }
+
+            signal.closedAt = now;
+            signal.closedPrice = currentPrice;
+
+            const outcome: SignalOutcome = {
+                id: signal.id,
+                asset: signal.asset,
+                assetClass: signal.assetClass,
+                direction: signal.direction,
+                score: signal.score,
+                components: signal.components,
+                enhancedComponents: signal.enhancedComponents,
+                regime: signal.regime,
+                regimeType: signal.regimeType,
+                gatesAllPass: signal.gatesAllPass,
+                entryHourUTC: new Date(signal.createdAt).getUTCHours(),
+                outcome: 'WIN',
+                pnlR: signal.currentPnL,
+                timestamp: signal.createdAt,
+                exitTimestamp: now,
+            };
+            recordOutcome(outcome);
+
+            updateSignalStatus(signal.id, 'WIN', currentPrice, `tracked_${signal.status.toLowerCase()}`);
+        }
+
+        updated.push(signal);
+    }
+
+    return updated;
 }
 
 // ===== STORAGE KEY =====
@@ -78,6 +234,9 @@ export function trackSignal(signal: {
     components: Record<string, number>;
     enhancedComponents?: Record<string, number>;
     regime: string;
+    regimeType?: string;
+    gates?: GateResultSummary[];
+    gatesAllPass?: boolean;
     validityHours: number;
 }): TrackedSignal {
     const state = loadTrackingState();
@@ -94,6 +253,9 @@ export function trackSignal(signal: {
         components: signal.components,
         enhancedComponents: signal.enhancedComponents,
         regime: signal.regime,
+        regimeType: signal.regimeType,
+        gates: signal.gates,
+        gatesAllPass: signal.gatesAllPass,
         status: 'ACTIVE',
         currentPrice: signal.price,
         currentPnL: 0,
@@ -117,7 +279,6 @@ export async function updateSignalPrices(): Promise<TrackedSignal[]> {
     if (activeSignals.length === 0) return [];
 
     // Fetch current prices
-    const symbols = [...new Set(activeSignals.map(s => s.asset))];
     const priceMap: Record<string, number> = {};
 
     try {
@@ -134,136 +295,18 @@ export async function updateSignalPrices(): Promise<TrackedSignal[]> {
     }
 
     const now = Date.now();
-    const updated: TrackedSignal[] = [];
-
-    // Update each signal
-    for (const signal of state.signals) {
-        if (signal.status !== 'ACTIVE') {
-            updated.push(signal);
-            continue;
-        }
-
-        const currentPrice = priceMap[signal.asset];
-        if (!currentPrice) {
-            updated.push(signal);
-            continue;
-        }
-
-        signal.currentPrice = currentPrice;
-
-        // Calculate PnL in R multiples
-        const slDistance = Math.abs(signal.entryPrice - signal.stopLoss);
-        const priceDiff = signal.direction === 'LONG'
-            ? currentPrice - signal.entryPrice
-            : signal.entryPrice - currentPrice;
-        signal.currentPnL = slDistance > 0 ? priceDiff / slDistance : 0;
-
-        // Check if expired
-        if (now > signal.expiresAt) {
-            signal.status = 'EXPIRED';
-            signal.closedAt = now;
-            signal.closedPrice = currentPrice;
-
-            // Record outcome
-            const outcome: SignalOutcome = {
-                id: signal.id,
-                asset: signal.asset,
-                assetClass: signal.assetClass,
-                direction: signal.direction,
-                score: signal.score,
-                components: signal.components,
-                enhancedComponents: signal.enhancedComponents,
-                regime: signal.regime,
-                outcome: signal.currentPnL > 0.5 ? 'WIN' : signal.currentPnL < -0.5 ? 'LOSS' : 'BREAKEVEN',
-                pnlR: signal.currentPnL,
-                timestamp: signal.createdAt,
-                exitTimestamp: now,
-            };
-            recordOutcome(outcome);
-        }
-        // Check SL hit
-        else if (
-            (signal.direction === 'LONG' && currentPrice <= signal.stopLoss) ||
-            (signal.direction === 'SHORT' && currentPrice >= signal.stopLoss)
-        ) {
-            signal.status = 'HIT_SL';
-            signal.closedAt = now;
-            signal.closedPrice = currentPrice;
-
-            const outcome: SignalOutcome = {
-                id: signal.id,
-                asset: signal.asset,
-                assetClass: signal.assetClass,
-                direction: signal.direction,
-                score: signal.score,
-                components: signal.components,
-                enhancedComponents: signal.enhancedComponents,
-                regime: signal.regime,
-                outcome: 'LOSS',
-                pnlR: -1,
-                timestamp: signal.createdAt,
-                exitTimestamp: now,
-            };
-            recordOutcome(outcome);
-        }
-        // Check TP1
-        else if (
-            (signal.direction === 'LONG' && currentPrice >= signal.takeProfits[0]?.price) ||
-            (signal.direction === 'SHORT' && currentPrice <= signal.takeProfits[0]?.price)
-        ) {
-            // Check TP3 first (highest)
-            if (
-                signal.takeProfits[2] &&
-                ((signal.direction === 'LONG' && currentPrice >= signal.takeProfits[2].price) ||
-                    (signal.direction === 'SHORT' && currentPrice <= signal.takeProfits[2].price))
-            ) {
-                signal.status = 'HIT_TP3';
-                signal.tpHitLevel = 3;
-                signal.currentPnL = 4;
-            }
-            // Check TP2
-            else if (
-                signal.takeProfits[1] &&
-                ((signal.direction === 'LONG' && currentPrice >= signal.takeProfits[1].price) ||
-                    (signal.direction === 'SHORT' && currentPrice <= signal.takeProfits[1].price))
-            ) {
-                signal.status = 'HIT_TP2';
-                signal.tpHitLevel = 2;
-                signal.currentPnL = 2.5;
-            }
-            // TP1
-            else {
-                signal.status = 'HIT_TP1';
-                signal.tpHitLevel = 1;
-                signal.currentPnL = 1.5;
-            }
-
-            signal.closedAt = now;
-            signal.closedPrice = currentPrice;
-
-            const outcome: SignalOutcome = {
-                id: signal.id,
-                asset: signal.asset,
-                assetClass: signal.assetClass,
-                direction: signal.direction,
-                score: signal.score,
-                components: signal.components,
-                enhancedComponents: signal.enhancedComponents,
-                regime: signal.regime,
-                outcome: 'WIN',
-                pnlR: signal.currentPnL,
-                timestamp: signal.createdAt,
-                exitTimestamp: now,
-            };
-            recordOutcome(outcome);
-        }
-
-        updated.push(signal);
-    }
-
+    const updated = applyPriceMapToSignals(state, priceMap, now);
     state.signals = updated;
     saveTrackingState(state);
+    return updated;
+}
 
+export function updateSignalPricesFromPriceMap(priceMap: Record<string, number>): TrackedSignal[] {
+    const state = loadTrackingState();
+    const now = Date.now();
+    const updated = applyPriceMapToSignals(state, priceMap, now);
+    state.signals = updated;
+    saveTrackingState(state);
     return updated;
 }
 
