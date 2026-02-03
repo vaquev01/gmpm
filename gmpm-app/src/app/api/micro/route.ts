@@ -89,13 +89,205 @@ interface MicroAnalysis {
         blockers: string[];
         catalysts: string[];
     };
+    levelSources?: string[];
+    adaptiveContext?: AdaptiveContext;
+}
+
+// Adaptive Target Context from MACRO/MESO
+interface AdaptiveContext {
+    regime: string;
+    volatilityContext: 'HIGH' | 'NORMAL' | 'LOW';
+    classExpectation: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+    classConfidence: 'HIGH' | 'MEDIUM' | 'LOW';
+    liquidityScore: number;
+}
+
+// Calculate adaptive multipliers based on MACRO/MESO context
+function getAdaptiveMultipliers(context: AdaptiveContext, technical: TechnicalAnalysis): {
+    slMultiplier: number;
+    tp1Multiplier: number;
+    tp2Multiplier: number;
+    tp3Multiplier: number;
+    useStructuralLevels: boolean;
+} {
+    let slMultiplier = 1.0;
+    let tp1Multiplier = 2.0;
+    let tp2Multiplier = 3.0;
+    let tp3Multiplier = 4.0;
+    
+    // MACRO REGIME ADJUSTMENTS
+    // High conviction regimes = wider targets, tighter stops
+    if (context.regime === 'GOLDILOCKS' || context.regime === 'REFLATION') {
+        tp1Multiplier = 2.5;
+        tp2Multiplier = 4.0;
+        tp3Multiplier = 6.0;
+        slMultiplier = 0.8; // Tighter stop in favorable regime
+    } else if (context.regime === 'RISK_OFF' || context.regime === 'LIQUIDITY_DRAIN') {
+        tp1Multiplier = 1.5; // Conservative targets
+        tp2Multiplier = 2.0;
+        tp3Multiplier = 2.5;
+        slMultiplier = 1.2; // Wider stop for volatility
+    } else if (context.regime === 'STAGFLATION') {
+        tp1Multiplier = 2.0;
+        tp2Multiplier = 3.0;
+        tp3Multiplier = 4.0;
+        slMultiplier = 1.5; // Extra wide for uncertainty
+    }
+    
+    // MESO CLASS CONFIDENCE ADJUSTMENTS
+    if (context.classConfidence === 'HIGH') {
+        tp1Multiplier *= 1.2; // Extend targets for high conviction
+        tp2Multiplier *= 1.2;
+        tp3Multiplier *= 1.2;
+    } else if (context.classConfidence === 'LOW') {
+        tp1Multiplier *= 0.8; // Reduce targets for low conviction
+        tp2Multiplier *= 0.8;
+        tp3Multiplier *= 0.8;
+        slMultiplier *= 1.2; // Wider stop
+    }
+    
+    // VOLATILITY CONTEXT ADJUSTMENTS
+    if (context.volatilityContext === 'HIGH') {
+        slMultiplier *= 1.3; // Wider stops in high vol
+        tp1Multiplier *= 1.2; // But also bigger moves possible
+    } else if (context.volatilityContext === 'LOW') {
+        slMultiplier *= 0.8; // Tighter stops in low vol
+        tp1Multiplier *= 0.9; // Smaller targets
+    }
+    
+    // MICRO TECHNICAL ADJUSTMENTS
+    // If trend is strongly aligned, extend targets
+    if (technical.trend.alignment === 'ALIGNED') {
+        tp2Multiplier *= 1.15;
+        tp3Multiplier *= 1.2;
+    }
+    
+    // If volume is climactic, tighten targets (potential exhaustion)
+    if (technical.volume.climax) {
+        tp1Multiplier *= 0.85;
+        tp2Multiplier *= 0.8;
+    }
+    
+    // Use structural levels if SMC data is strong
+    const useStructuralLevels = 
+        technical.smc.orderBlocks.length > 0 || 
+        technical.smc.liquidityPools.length > 0 ||
+        technical.levels.support.length >= 2;
+    
+    return { slMultiplier, tp1Multiplier, tp2Multiplier, tp3Multiplier, useStructuralLevels };
+}
+
+// Calculate smart levels using SMC and S/R
+function calculateSmartLevels(
+    price: number,
+    atr: number,
+    isLong: boolean,
+    technical: TechnicalAnalysis,
+    multipliers: { slMultiplier: number; tp1Multiplier: number; tp2Multiplier: number; tp3Multiplier: number; useStructuralLevels: boolean }
+): { stopLoss: number; tp1: number; tp2: number; tp3: number; levelSources: string[] } {
+    const { slMultiplier, tp1Multiplier, tp2Multiplier, tp3Multiplier, useStructuralLevels } = multipliers;
+    const levelSources: string[] = [];
+    
+    // Default ATR-based levels
+    let stopLoss = isLong ? price - (atr * slMultiplier) : price + (atr * slMultiplier);
+    let tp1 = isLong ? price + (atr * tp1Multiplier) : price - (atr * tp1Multiplier);
+    let tp2 = isLong ? price + (atr * tp2Multiplier) : price - (atr * tp2Multiplier);
+    let tp3 = isLong ? price + (atr * tp3Multiplier) : price - (atr * tp3Multiplier);
+    
+    if (useStructuralLevels) {
+        const { levels, smc } = technical;
+        
+        // STOP LOSS: Use order blocks or support/resistance
+        if (isLong) {
+            // For longs, find nearest support below entry
+            const supports = [...levels.support].filter(s => s < price).sort((a, b) => b - a);
+            const bullishOBs = smc.orderBlocks.filter(ob => ob.type === 'BULLISH' && ob.high < price);
+            
+            if (bullishOBs.length > 0) {
+                // Place SL below the order block
+                const nearestOB = bullishOBs.sort((a, b) => b.high - a.high)[0];
+                const obSL = nearestOB.low - (atr * 0.2);
+                if (obSL > price - (atr * 2)) { // Don't use if too far
+                    stopLoss = obSL;
+                    levelSources.push('SL: Below Bullish OB');
+                }
+            } else if (supports.length > 0 && supports[0] > price - (atr * 2)) {
+                stopLoss = supports[0] - (atr * 0.2);
+                levelSources.push('SL: Below Support');
+            } else {
+                levelSources.push('SL: ATR-based');
+            }
+            
+            // TAKE PROFITS: Use resistance levels and liquidity pools
+            const resistances = [...levels.resistance].filter(r => r > price).sort((a, b) => a - b);
+            const sellLiquidity = smc.liquidityPools.filter(lp => lp.type === 'SELL_SIDE' && lp.level > price);
+            
+            if (resistances.length >= 1) {
+                tp1 = resistances[0];
+                levelSources.push('TP1: Resistance');
+            }
+            if (resistances.length >= 2) {
+                tp2 = resistances[1];
+                levelSources.push('TP2: Resistance');
+            }
+            if (sellLiquidity.length > 0) {
+                const liquidityTarget = sellLiquidity.sort((a, b) => a.level - b.level)[0].level;
+                if (liquidityTarget > tp2) {
+                    tp3 = liquidityTarget;
+                    levelSources.push('TP3: Liquidity Pool');
+                }
+            }
+        } else {
+            // For shorts, find nearest resistance above entry
+            const resistances = [...levels.resistance].filter(r => r > price).sort((a, b) => a - b);
+            const bearishOBs = smc.orderBlocks.filter(ob => ob.type === 'BEARISH' && ob.low > price);
+            
+            if (bearishOBs.length > 0) {
+                const nearestOB = bearishOBs.sort((a, b) => a.low - b.low)[0];
+                const obSL = nearestOB.high + (atr * 0.2);
+                if (obSL < price + (atr * 2)) {
+                    stopLoss = obSL;
+                    levelSources.push('SL: Above Bearish OB');
+                }
+            } else if (resistances.length > 0 && resistances[0] < price + (atr * 2)) {
+                stopLoss = resistances[0] + (atr * 0.2);
+                levelSources.push('SL: Above Resistance');
+            } else {
+                levelSources.push('SL: ATR-based');
+            }
+            
+            // TAKE PROFITS: Use support levels and liquidity pools
+            const supports = [...levels.support].filter(s => s < price).sort((a, b) => b - a);
+            const buyLiquidity = smc.liquidityPools.filter(lp => lp.type === 'BUY_SIDE' && lp.level < price);
+            
+            if (supports.length >= 1) {
+                tp1 = supports[0];
+                levelSources.push('TP1: Support');
+            }
+            if (supports.length >= 2) {
+                tp2 = supports[1];
+                levelSources.push('TP2: Support');
+            }
+            if (buyLiquidity.length > 0) {
+                const liquidityTarget = buyLiquidity.sort((a, b) => b.level - a.level)[0].level;
+                if (liquidityTarget < tp2) {
+                    tp3 = liquidityTarget;
+                    levelSources.push('TP3: Liquidity Pool');
+                }
+            }
+        }
+    } else {
+        levelSources.push('All levels: ATR-based');
+    }
+    
+    return { stopLoss, tp1, tp2, tp3, levelSources };
 }
 
 // Fetch meso inputs with full context
 async function fetchMesoInputs(): Promise<{ 
     instruments: MesoInput[]; 
     prohibited: string[];
-    context: { favoredDirection: string; volatilityContext: string; regime: string; bias: string };
+    context: { favoredDirection: string; volatilityContext: string; regime: string; bias: string; classAnalysis?: Record<string, { expectation: string; confidence: string; liquidityScore: number }> };
 }> {
     try {
         const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000';
@@ -110,13 +302,17 @@ async function fetchMesoInputs(): Promise<{
                     volatilityContext: data.microInputs?.volatilityContext || 'NORMAL',
                     regime: data.regime?.type || 'NEUTRAL',
                     bias: data.executiveSummary?.marketBias || 'NEUTRAL',
+                    classAnalysis: data.classAnalysis?.reduce((acc: Record<string, { expectation: string; confidence: string; liquidityScore: number }>, cls: { class: string; expectation: string; confidence: string; liquidityScore: number }) => {
+                        acc[cls.class] = { expectation: cls.expectation, confidence: cls.confidence, liquidityScore: cls.liquidityScore };
+                        return acc;
+                    }, {}) || {},
                 }
             };
         }
     } catch (e) {
         console.error('Failed to fetch meso inputs:', e);
     }
-    return { instruments: [], prohibited: [], context: { favoredDirection: 'NEUTRAL', volatilityContext: 'NORMAL', regime: 'NEUTRAL', bias: 'NEUTRAL' } };
+    return { instruments: [], prohibited: [], context: { favoredDirection: 'NEUTRAL', volatilityContext: 'NORMAL', regime: 'NEUTRAL', bias: 'NEUTRAL', classAnalysis: {} } };
 }
 
 // Fetch market data for a symbol
@@ -424,15 +620,16 @@ function analyzeScenarioProgress(
     };
 }
 
-// Generate setups from technical analysis (only if scenario is PRONTO)
+// Generate setups from technical analysis with ADAPTIVE TARGETS based on MACRO/MESO/MICRO
 function generateSetups(
     symbol: string,
     displaySymbol: string,
     price: number,
     technical: TechnicalAnalysis,
     mesoDirection: 'LONG' | 'SHORT',
-    mesoReason: string
-): { setup: Setup | null; scenarioAnalysis: ScenarioAnalysis } {
+    mesoReason: string,
+    adaptiveContext?: AdaptiveContext
+): { setup: Setup | null; scenarioAnalysis: ScenarioAnalysis; levelSources?: string[] } {
     const { trend, levels, indicators, smc } = technical;
     const atr = levels.atr;
     
@@ -454,13 +651,41 @@ function generateSetups(
     if (indicators.rsiDivergence) setupType = 'REVERSAL';
     if (smc.fvgs.length > 0 && !smc.fvgs[0].filled) setupType = 'LIQUIDITY_GRAB';
     
-    // Calculate entry, SL, TPs based on direction
     const isLong = mesoDirection === 'LONG';
     const entry = price;
-    const stopLoss = isLong ? entry - atr : entry + atr;
-    const tp1 = isLong ? entry + atr * 2 : entry - atr * 2;
-    const tp2 = isLong ? entry + atr * 3 : entry - atr * 3;
-    const tp3 = isLong ? entry + atr * 4 : entry - atr * 4;
+    
+    // ============================================
+    // ADAPTIVE TARGET CALCULATION (MACRO → MESO → MICRO)
+    // ============================================
+    let stopLoss: number, tp1: number, tp2: number, tp3: number;
+    let levelSources: string[] = [];
+    
+    if (adaptiveContext) {
+        // Use adaptive multipliers based on MACRO regime and MESO class context
+        const multipliers = getAdaptiveMultipliers(adaptiveContext, technical);
+        
+        // Calculate smart levels using SMC and S/R when available
+        const smartLevels = calculateSmartLevels(price, atr, isLong, technical, multipliers);
+        
+        stopLoss = smartLevels.stopLoss;
+        tp1 = smartLevels.tp1;
+        tp2 = smartLevels.tp2;
+        tp3 = smartLevels.tp3;
+        levelSources = smartLevels.levelSources;
+        
+        // Add adaptive context to confluences
+        confluences.push(`Regime: ${adaptiveContext.regime}`);
+        confluences.push(`Class: ${adaptiveContext.classExpectation} (${adaptiveContext.classConfidence})`);
+        if (levelSources.some(s => s.includes('OB'))) confluences.push('Order Block confluence');
+        if (levelSources.some(s => s.includes('Liquidity'))) confluences.push('Liquidity target');
+    } else {
+        // Fallback to simple ATR-based calculation
+        stopLoss = isLong ? entry - atr : entry + atr;
+        tp1 = isLong ? entry + atr * 2 : entry - atr * 2;
+        tp2 = isLong ? entry + atr * 3 : entry - atr * 3;
+        tp3 = isLong ? entry + atr * 4 : entry - atr * 4;
+        levelSources = ['All levels: ATR-based (no context)'];
+    }
     
     const risk = Math.abs(entry - stopLoss);
     const reward = Math.abs(tp1 - entry);
@@ -469,10 +694,11 @@ function generateSetups(
     const confidence: Setup['confidence'] = scenarioAnalysis.technicalAlignment >= 75 ? 'HIGH' :
         scenarioAnalysis.technicalAlignment >= 60 ? 'MEDIUM' : 'LOW';
     
-    // Generate thesis incorporating MESO reason and scenario status
+    // Generate thesis incorporating MESO reason, scenario status, and level sources
+    const levelInfo = levelSources.length > 0 ? ` | Levels: ${levelSources.slice(0, 2).join(', ')}` : '';
     const thesis = `[${scenarioAnalysis.status}] ${mesoReason} | ` +
         `${mesoDirection} ${displaySymbol}: ${setupType} @ ${smc.premiumDiscount.toLowerCase()}. ` +
-        `${scenarioAnalysis.statusReason}`;
+        `${scenarioAnalysis.statusReason}${levelInfo}`;
     
     const setup: Setup = {
         id: `${symbol}-${setupType}-${Date.now()}`,
@@ -495,7 +721,7 @@ function generateSetups(
         technicalScore: scenarioAnalysis.technicalAlignment,
     };
     
-    return { setup, scenarioAnalysis };
+    return { setup, scenarioAnalysis, levelSources };
 }
 
 // Generate recommendation
@@ -591,14 +817,25 @@ export async function GET() {
             
             const technical = generateTechnicalAnalysis(input.symbol, data);
             
-            // MICRO refines MESO scenario - analyze progress
-            const { setup, scenarioAnalysis } = generateSetups(
+            // Build adaptive context from MACRO/MESO
+            const classInfo = context.classAnalysis?.[input.class] as { expectation?: string; confidence?: string; liquidityScore?: number } | undefined;
+            const adaptiveContext: AdaptiveContext = {
+                regime: context.regime,
+                volatilityContext: (context.volatilityContext as 'HIGH' | 'NORMAL' | 'LOW') || 'NORMAL',
+                classExpectation: (classInfo?.expectation as 'BULLISH' | 'BEARISH' | 'NEUTRAL') || 'NEUTRAL',
+                classConfidence: (classInfo?.confidence as 'HIGH' | 'MEDIUM' | 'LOW') || 'MEDIUM',
+                liquidityScore: classInfo?.liquidityScore || 50,
+            };
+            
+            // MICRO refines MESO scenario with ADAPTIVE TARGETS
+            const { setup, scenarioAnalysis, levelSources } = generateSetups(
                 input.symbol, 
                 input.symbol, 
                 data.price, 
                 technical, 
                 input.direction,
-                input.reason
+                input.reason,
+                adaptiveContext
             );
             
             // Build setups array (may be empty if scenario is CONTRA)
@@ -633,8 +870,9 @@ export async function GET() {
                 technical,
                 setups,
                 recommendation,
-                // Add scenario analysis to output
                 scenarioAnalysis,
+                levelSources: levelSources || [],
+                adaptiveContext,
             });
         }
         
