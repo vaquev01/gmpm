@@ -27,7 +27,7 @@ export interface FractalConcept {
 }
 
 
-export type ViewType = 'command' | 'macro' | 'meso' | 'lab' | 'factory' | 'incubator' | 'universe';
+export type ViewType = 'command' | 'macro' | 'meso' | 'lab' | 'factory' | 'incubator' | 'universe' | 'micro';
 
 export type FactoryTab = 'backtest' | 'paper' | 'learning' | 'risk';
 

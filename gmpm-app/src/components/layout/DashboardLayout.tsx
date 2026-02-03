@@ -30,6 +30,7 @@ export const DashboardLayout = ({ children }: DashboardLayoutProps) => {
                 { id: 'command' as ViewType, label: 'WORKSPACE' },
                 { id: 'macro' as ViewType, label: 'MACRO' },
                 { id: 'meso' as ViewType, label: 'MESO' },
+                { id: 'micro' as ViewType, label: 'MICRO' },
             ]
         },
         {
