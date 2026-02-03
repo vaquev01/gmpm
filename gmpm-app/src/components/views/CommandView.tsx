@@ -506,7 +506,7 @@ const InstitutionalGatesPanel = ({
                         )}
                     </div>
                     <div className="text-gray-500">
-                        {new Date().toLocaleTimeString()} UTC
+                        Live
                     </div>
                 </div>
             </CardContent>
