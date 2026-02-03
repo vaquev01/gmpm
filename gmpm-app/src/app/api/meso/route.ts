@@ -706,6 +706,63 @@ export async function GET() {
             oneLineSummary: temporalFocus.weeklyThesis,
         };
 
+        // Generate allowed/prohibited instruments for MICRO layer (next 24h focus)
+        const allowedInstruments: { symbol: string; direction: 'LONG' | 'SHORT'; class: string; reason: string }[] = [];
+        const prohibitedInstruments: { symbol: string; reason: string }[] = [];
+
+        for (const cls of classAnalysis) {
+            if (cls.direction === 'LONG' && (cls.expectation === 'BULLISH' || cls.expectation === 'MIXED')) {
+                cls.topPicks.forEach(pick => {
+                    allowedInstruments.push({
+                        symbol: pick,
+                        direction: 'LONG',
+                        class: cls.name,
+                        reason: cls.drivers[0] || 'Aligned with regime'
+                    });
+                });
+            } else if (cls.direction === 'SHORT' && cls.expectation === 'BEARISH') {
+                cls.topPicks.forEach(pick => {
+                    allowedInstruments.push({
+                        symbol: pick,
+                        direction: 'SHORT',
+                        class: cls.name,
+                        reason: cls.drivers[0] || 'Bearish regime'
+                    });
+                });
+            }
+            
+            if (cls.direction === 'AVOID') {
+                cls.avoidList.forEach(avoid => {
+                    prohibitedInstruments.push({
+                        symbol: avoid,
+                        reason: `${cls.name}: ${cls.drivers[0] || 'Regime prohibition'}`
+                    });
+                });
+            }
+        }
+
+        // Add tilt-based instruments
+        regime.mesoTilts.slice(0, 5).forEach(tilt => {
+            if (!allowedInstruments.find(a => a.symbol === tilt.asset)) {
+                allowedInstruments.push({
+                    symbol: tilt.asset,
+                    direction: tilt.direction === 'LONG' ? 'LONG' : 'SHORT',
+                    class: 'tilt',
+                    reason: tilt.rationale
+                });
+            }
+        });
+
+        // Add prohibition-based instruments
+        regime.mesoProhibitions.forEach(prohibition => {
+            if (!prohibitedInstruments.find(p => p.symbol === prohibition)) {
+                prohibitedInstruments.push({
+                    symbol: prohibition,
+                    reason: 'Regime prohibition'
+                });
+            }
+        });
+
         return NextResponse.json({
             success: true,
             timestamp: new Date().toISOString(),
@@ -724,6 +781,14 @@ export async function GET() {
                 },
             },
             temporalFocus,
+            // OUTPUTS FOR MICRO LAYER
+            microInputs: {
+                allowedInstruments,
+                prohibitedInstruments,
+                favoredDirection: marketBias === 'RISK_ON' ? 'LONG' : marketBias === 'RISK_OFF' ? 'SHORT' : 'NEUTRAL',
+                volatilityContext: (macro.vix || 20) > 25 ? 'HIGH' : (macro.vix || 20) < 15 ? 'LOW' : 'NORMAL',
+                nextCatalysts: temporalFocus.catalysts.slice(0, 3),
+            },
             classes: classAnalysis,
             sectors: sectorAnalysis,
             summary: {
