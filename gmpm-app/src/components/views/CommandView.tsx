@@ -2326,8 +2326,8 @@ export const CommandView = () => {
 
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 h-[calc(100vh-280px)] min-h-[500px]">
 
-                {/* ZONE A: MAIN SCANNER (8 cols) */}
-                <div className="lg:col-span-8 flex flex-col gap-4">
+                {/* UNIFIED SCANNER - Full Width or with Detail Panel */}
+                <div className={cn("flex flex-col gap-4 transition-all duration-300", selectedAssetData ? "lg:col-span-8" : "lg:col-span-12")}>
                     <Card className="flex-1 bg-gray-900 border-gray-800 overflow-hidden flex flex-col">
                         <CardHeader className="py-3 px-4 border-b border-gray-800 bg-gray-900 flex flex-col gap-3">
                             <div className="flex flex-row items-center justify-between">
@@ -2424,24 +2424,21 @@ export const CommandView = () => {
                             <Table>
                                 <TableHeader className="bg-gray-950 text-[10px] uppercase sticky top-0 z-10">
                                     <TableRow className="hover:bg-transparent border-gray-800">
-                                        <TableHead className="h-9 w-10 text-center text-gray-600">#</TableHead>
-                                        <TableHead className="h-9 text-gray-400 font-bold w-16">Asset</TableHead>
-                                        <TableHead className="h-9 text-cyan-400 font-bold w-24">Price</TableHead>
-                                        <TableHead className="h-9 text-gray-500 font-bold w-40 hidden md:table-cell">Name</TableHead>
-                                        <TableHead className="h-9 text-gray-500 font-bold w-20 hidden md:table-cell">Type</TableHead>
-                                        <TableHead className="h-9 text-gray-500 font-bold w-20 hidden md:table-cell">Sector</TableHead>
-                                        <TableHead className="h-9 text-gray-400 font-bold text-center">Score</TableHead>
-                                        <TableHead className="h-9 text-gray-400 font-bold">Trend</TableHead>
-                                        <TableHead className="h-9 text-gray-400 font-bold">Signal</TableHead>
-                                        <TableHead className="h-9 text-cyan-500 font-bold">TF</TableHead>
-                                        <TableHead className="h-9 text-amber-500 font-bold">Conf</TableHead>
-
-                                        <TableHead className="h-9 text-gray-300 font-bold border-l border-gray-800 pl-4">Entry</TableHead>
-                                        <TableHead className="h-9 text-green-600 font-bold">Target</TableHead>
-                                        <TableHead className="h-9 text-red-600 font-bold">Stop</TableHead>
-                                        <TableHead className="h-9 text-purple-400 font-bold">R:R</TableHead>
-
-                                        <TableHead className="h-9 text-gray-400 font-bold text-right">Action</TableHead>
+                                        <TableHead className="h-9 w-8 text-center text-gray-600">#</TableHead>
+                                        <TableHead className="h-9 text-gray-400 font-bold w-14">Asset</TableHead>
+                                        <TableHead className="h-9 text-cyan-400 font-bold w-20">Price</TableHead>
+                                        <TableHead className="h-9 text-blue-400 font-bold w-10 text-center">RSI</TableHead>
+                                        <TableHead className="h-9 text-yellow-400 font-bold w-10 text-center">RV</TableHead>
+                                        <TableHead className="h-9 text-gray-400 font-bold text-center w-12">Score</TableHead>
+                                        <TableHead className="h-9 text-gray-400 font-bold w-16">Trend</TableHead>
+                                        <TableHead className="h-9 text-gray-400 font-bold w-14">Signal</TableHead>
+                                        <TableHead className="h-9 text-cyan-500 font-bold w-10">TF</TableHead>
+                                        <TableHead className="h-9 text-amber-500 font-bold w-10">Conf</TableHead>
+                                        <TableHead className="h-9 text-gray-300 font-bold border-l border-gray-800 pl-3 w-16">Entry</TableHead>
+                                        <TableHead className="h-9 text-green-600 font-bold w-16">Target</TableHead>
+                                        <TableHead className="h-9 text-red-600 font-bold w-16">Stop</TableHead>
+                                        <TableHead className="h-9 text-purple-400 font-bold w-10">R:R</TableHead>
+                                        <TableHead className="h-9 text-gray-400 font-bold text-center w-10">Act</TableHead>
                                     </TableRow>
                                 </TableHeader>
                                 <TableBody className="text-xs font-mono">
@@ -2501,10 +2498,29 @@ export const CommandView = () => {
                                                         </div>
                                                     </div>
                                                 </TableCell>
-                                                <TableCell className="text-xs text-gray-500 hidden md:table-cell truncate max-w-[200px]" title={row.name}>{row.name}</TableCell>
-                                                <TableCell className="text-xs text-gray-500 hidden md:table-cell uppercase">{row.assetClass}</TableCell>
-                                                <TableCell className="text-xs text-gray-500 hidden md:table-cell uppercase">{row.sector}</TableCell>
-
+                                                {/* RSI Indicator */}
+                                                <TableCell className="text-center">
+                                                    <span className={cn(
+                                                        "px-1 py-0.5 rounded text-[9px] font-bold",
+                                                        (row.rsi || 50) > 70 ? "bg-red-500/20 text-red-400 border border-red-500/30" :
+                                                        (row.rsi || 50) < 30 ? "bg-green-500/20 text-green-400 border border-green-500/30" :
+                                                        "bg-gray-800/50 text-gray-500"
+                                                    )}>
+                                                        {Math.round(row.rsi || 50)}
+                                                    </span>
+                                                </TableCell>
+                                                {/* Relative Volume */}
+                                                <TableCell className="text-center">
+                                                    <span className={cn(
+                                                        "px-1 py-0.5 rounded text-[9px] font-bold",
+                                                        (row.rvol || 1) > 2.0 ? "bg-yellow-500/20 text-yellow-400 border border-yellow-500/30" :
+                                                        (row.rvol || 1) > 1.5 ? "bg-blue-500/20 text-blue-400" :
+                                                        "bg-gray-800/50 text-gray-600"
+                                                    )}>
+                                                        {(row.rvol || 1).toFixed(1)}x
+                                                    </span>
+                                                </TableCell>
+                                                {/* Score */}
                                                 <TableCell className="text-center">
                                                     <span className={cn(
                                                         "px-1.5 py-0.5 rounded text-[10px] font-bold",
@@ -2564,121 +2580,17 @@ export const CommandView = () => {
                     </Card>
                 </div>
 
-                {/* ZONE B: SIDEBAR (Market Watch - Real) */}
-                <div className="lg:col-span-4 flex flex-col gap-4">
-                    {selectedAssetData ? (
+                {/* DETAIL PANEL - Only shows when asset is selected */}
+                {selectedAssetData && (
+                    <div className="lg:col-span-4 flex flex-col gap-4">
                         <AssetDetailPanel
                             key={selectedAssetData.symbol}
                             asset={selectedAssetData}
                             onClose={() => setSelectedScannerAsset(null)}
                             onExecute={executeSignal}
                         />
-                    ) : (
-                        <Card className="h-full bg-gray-900 border-gray-800 flex flex-col">
-                            <CardHeader className="py-3 px-4 border-b border-gray-800 space-y-3">
-                                <div className="flex justify-between items-center">
-                                    <div className="text-xs font-bold text-gray-400 uppercase tracking-wider">Market Watch</div>
-                                    <div className="text-[10px] font-mono text-gray-600">Updated: {lastUpdated ? lastUpdated.toLocaleTimeString() : 'N/A'}</div>
-                                    {/* Sort Controls */}
-                                    <div className="flex gap-1 bg-gray-950 p-0.5 rounded border border-gray-800">
-                                        <button onClick={() => setSortBy('vol')} className={cn("px-2 py-0.5 text-[9px] rounded font-bold uppercase transition-colors", sortBy === 'vol' ? "bg-gray-800 text-purple-400" : "text-gray-600 hover:text-gray-400")}>Vol</button>
-                                        <button onClick={() => setSortBy('rsi')} className={cn("px-2 py-0.5 text-[9px] rounded font-bold uppercase transition-colors", sortBy === 'rsi' ? "bg-gray-800 text-blue-400" : "text-gray-600 hover:text-gray-400")}>RSI</button>
-                                        <button onClick={() => setSortBy('rvol')} className={cn("px-2 py-0.5 text-[9px] rounded font-bold uppercase transition-colors", sortBy === 'rvol' ? "bg-gray-800 text-yellow-400" : "text-gray-600 hover:text-gray-400")}>RV</button>
-                                    </div>
-                                </div>
-                                {/* FILTER INPUT */}
-                                <div className="relative">
-                                    <Search className="absolute left-2 top-2.5 w-3 h-3 text-gray-500" />
-                                    <input
-                                        className="w-full bg-gray-950 border border-gray-800 rounded text-xs py-2 pl-8 text-gray-300 focus:outline-none focus:border-purple-500 placeholder:text-gray-700 transition-colors"
-                                        placeholder="Filter real assets..."
-                                        value={filterText}
-                                        onChange={(e) => setFilterText(e.target.value)}
-                                    />
-                                </div>
-                            </CardHeader>
-                            <CardContent className="p-0 overflow-y-auto flex-1 custom-scrollbar bg-gray-900">
-                                {/* Functional List Rendering with REAL DATA */}
-                                {loading && assets.length === 0 ? (
-                                    <div className="p-8 text-center text-gray-500 text-xs">Loading Live Data...</div>
-                                ) : (
-                                    marketWatchList
-                                        .filter(item => item.displaySymbol.toLowerCase().includes(filterText.toLowerCase()) || item.symbol.toLowerCase().includes(filterText.toLowerCase()))
-                                        .sort((a, b) => {
-                                            if (sortBy === 'vol') return Math.abs(b.changePercent) - Math.abs(a.changePercent);
-                                            if (sortBy === 'rsi') return (b.rsi || 50) - (a.rsi || 50);
-                                            if (sortBy === 'rvol') return b.rvol - a.rvol;
-                                            return 0;
-                                        })
-                                        .map((item) => (
-                                            <div key={item.symbol}
-                                                data-testid="market-watch-item"
-                                                className={cn("flex justify-between items-center px-4 py-3 border-b border-gray-800/50 cursor-pointer group transition-colors", selectedScannerAsset === item.symbol ? "bg-gray-800" : "hover:bg-gray-800/30")}
-                                                onClick={() => setSelectedScannerAsset(item.symbol)}
-                                            >
-                                                <div className="flex items-center gap-3">
-                                                    {/* Name & Sparkline */}
-                                                    <div className="flex flex-col w-[70px]">
-                                                        <span className="text-sm font-bold text-gray-200 group-hover:text-white leading-none">{item.displaySymbol}</span>
-                                                        <Sparkline
-                                                            data={(Array.isArray(item.history) && item.history.length > 2) ? item.history.slice(-12) : [item.price, item.price]}
-                                                            color={item.changePercent < 0 ? "text-red-500" : "text-green-500"}
-                                                            height="h-3"
-                                                        />
-                                                    </div>
-
-                                                    {/* Advanced Indicators (RSI / RVol) */}
-                                                    <div className="flex gap-2">
-                                                        <div className={cn(
-                                                            "px-1.5 py-0.5 rounded text-[9px] font-mono font-bold w-9 text-center",
-                                                            (item.rsi || 50) > 70 ? "bg-red-500/20 text-red-500 border border-red-500/30" :
-                                                                (item.rsi || 50) < 30 ? "bg-green-500/20 text-green-500 border border-green-500/30" : "bg-gray-800 text-gray-500"
-                                                        )}>
-                                                            RSI:{Math.round(item.rsi || 50)}
-                                                        </div>
-                                                        <div className={cn(
-                                                            "px-1.5 py-0.5 rounded text-[9px] font-mono font-bold text-center",
-                                                            "bg-gray-800 text-gray-500"
-                                                        )}>
-                                                            AGE:{formatQuoteAge(item.quoteTimestamp)}
-                                                        </div>
-                                                        <div className={cn(
-                                                            "px-1.5 py-0.5 rounded text-[9px] font-mono font-bold text-center",
-                                                            item.quality?.status === 'OK' ? 'bg-green-500/20 text-green-400 border border-green-500/30' :
-                                                                item.quality?.status === 'PARTIAL' ? 'bg-yellow-500/20 text-yellow-400 border border-yellow-500/30' :
-                                                                    item.quality?.status === 'STALE' ? 'bg-orange-500/20 text-orange-400 border border-orange-500/30' :
-                                                                        item.quality?.status === 'SUSPECT' ? 'bg-red-500/20 text-red-400 border border-red-500/30' :
-                                                                            'bg-gray-800 text-gray-500'
-                                                        )}>
-                                                            Q:{item.quality?.status ?? 'N/A'}
-                                                        </div>
-                                                        <div className={cn(
-                                                            "px-1.5 py-0.5 rounded text-[9px] font-mono font-bold w-9 text-center",
-                                                            item.rvol > 2.0 ? "bg-yellow-500/20 text-yellow-500 border border-yellow-500/30" : "bg-gray-800 text-gray-600"
-                                                        )}>
-                                                            RV:{item.rvol.toFixed(1)}x
-                                                        </div>
-                                                    </div>
-                                                </div>
-
-                                                <div className="text-right w-[80px]">
-                                                    <span className="block text-xs font-mono font-bold text-gray-300">
-                                                        {item.price < 1 ? item.price.toFixed(4) : item.price.toLocaleString()}
-                                                    </span>
-                                                    <span className={cn(
-                                                        "block text-[10px] font-mono font-bold mt-0.5",
-                                                        item.changePercent < 0 ? "text-red-400" : "text-green-400"
-                                                    )}>
-                                                        {item.changePercent > 0 ? '+' : ''}{item.changePercent.toFixed(2)}%
-                                                    </span>
-                                                </div>
-                                            </div>
-                                        ))
-                                )}
-                            </CardContent>
-                        </Card>
-                    )}
-                </div>
+                    </div>
+                )}
 
             </div>
         </div>
