@@ -1880,14 +1880,42 @@ export const CommandView = () => {
     const sendToIncubator = () => {
         if (selectedAssets.size === 0) return;
 
+        // Enrich assets with SCAN/MICRO data
         const portfolioAssets = assets
             .filter(a => selectedAssets.has(a.symbol))
-            .map(a => ({
-                symbol: a.symbol,
-                entryPrice: a.price,
-                side: (a.signal === 'SHORT' ? 'SHORT' : 'LONG') as 'SHORT' | 'LONG', // Explicit cast for strict type safety
-                lots: 1 // Default lot
-            }));
+            .map(a => {
+                // Find matching MICRO analysis
+                const microAnalysis = microAnalyses.find(m => m.symbol === a.symbol);
+                const microSetup = microSetups.find(m => m.symbol === a.symbol);
+                const setup = microSetup?.setup;
+                
+                // Calculate risk profile and dynamic R:R based on score
+                const score = setup?.technicalScore || 50;
+                const riskProfile = score >= 75 ? 'SAFE' : score >= 55 ? 'MODERATE' : 'AGGRESSIVE';
+                
+                // Dynamic lot sizing based on score
+                const lotMultiplier = score >= 80 ? 1.0 : score >= 70 ? 0.8 : score >= 60 ? 0.6 : score >= 50 ? 0.4 : 0.25;
+                const adjustedLots = builderConfig.lots * lotMultiplier;
+                
+                return {
+                    symbol: a.symbol,
+                    entryPrice: setup?.entry || a.price,
+                    side: (setup?.direction || (a.signal === 'SHORT' ? 'SHORT' : 'LONG')) as 'SHORT' | 'LONG',
+                    lots: adjustedLots,
+                    // SCAN/MICRO enrichment
+                    stopLoss: setup?.stopLoss,
+                    takeProfit1: setup?.takeProfit1,
+                    takeProfit2: setup?.takeProfit2,
+                    riskReward: setup?.riskReward,
+                    technicalScore: setup?.technicalScore,
+                    scenarioStatus: microAnalysis?.scenarioAnalysis?.status as 'PRONTO' | 'DESENVOLVENDO' | 'CONTRA' | undefined,
+                    entryQuality: microAnalysis?.scenarioAnalysis?.entryQuality as 'OTIMO' | 'BOM' | 'RUIM' | undefined,
+                    riskProfile: riskProfile as 'SAFE' | 'MODERATE' | 'AGGRESSIVE',
+                    confluences: setup?.confluences,
+                    thesis: setup?.thesis,
+                    mesoReason: mesoData?.allowedInstruments.find(i => i.symbol === a.symbol)?.reason,
+                };
+            });
 
         addPortfolio({
             id: crypto.randomUUID(),
@@ -1900,7 +1928,7 @@ export const CommandView = () => {
 
         // Clear selection and notify (mock)
         setSelectedAssets(new Set());
-        console.info('Portfolio sent to Incubator!'); // Replace with toast later
+        console.info('Portfolio sent to Incubator with SCAN data!');
     };
 
     // FETCH REAL DATA

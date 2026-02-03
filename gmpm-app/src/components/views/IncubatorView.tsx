@@ -1,10 +1,11 @@
 
 import React, { useState, useEffect } from 'react';
 import { useStore } from '@/store/useStore';
-import { IncubatorPortfolio } from '@/types';
+import { IncubatorPortfolio, TrackedAsset } from '@/types';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Trash2, TrendingUp, TrendingDown, Settings, DollarSign, Wallet } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
+import { Trash2, TrendingUp, TrendingDown, Settings, DollarSign, Wallet, Shield, Zap, Target, AlertTriangle, CheckCircle, Clock } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import {
     Dialog,
@@ -13,15 +14,63 @@ import {
     DialogHeader,
     DialogTitle,
     DialogFooter,
-    DialogTrigger,
 } from "@/components/ui/dialog";
 
-// Minimal mock ScoredAsset type if needed for type safety within this file scope until imported properly
-// In a real scenario, this would import from the same place CommandView does, or useStore
-interface RealAssetData {
-    symbol: string;
-    price: number;
-    changePercent: number;
+// Risk Profile Classification based on score
+function classifyRiskProfile(score: number): 'SAFE' | 'MODERATE' | 'AGGRESSIVE' {
+    if (score >= 75) return 'SAFE';
+    if (score >= 55) return 'MODERATE';
+    return 'AGGRESSIVE';
+}
+
+// Dynamic R:R based on score for efficient bankroll management
+function calculateDynamicRR(score: number): { rr: number; lotMultiplier: number; maxRisk: number } {
+    // Higher score = better R:R and larger position allowed
+    if (score >= 80) {
+        return { rr: 3, lotMultiplier: 1.0, maxRisk: 2.0 }; // SAFE: 3:1 R:R, full lots, 2% risk
+    } else if (score >= 70) {
+        return { rr: 2.5, lotMultiplier: 0.8, maxRisk: 1.5 }; // SAFE: 2.5:1 R:R, 80% lots, 1.5% risk
+    } else if (score >= 60) {
+        return { rr: 2, lotMultiplier: 0.6, maxRisk: 1.0 }; // MODERATE: 2:1 R:R, 60% lots, 1% risk
+    } else if (score >= 50) {
+        return { rr: 2, lotMultiplier: 0.4, maxRisk: 0.75 }; // MODERATE: 2:1 R:R, 40% lots, 0.75% risk
+    } else {
+        return { rr: 3, lotMultiplier: 0.25, maxRisk: 0.5 }; // AGGRESSIVE: Need 3:1 to compensate, 25% lots, 0.5% risk
+    }
+}
+
+// Status badge component
+function StatusBadge({ status }: { status?: string }) {
+    if (!status) return null;
+    const config = {
+        'PRONTO': { color: 'bg-green-500/20 text-green-400 border-green-500/30', icon: CheckCircle },
+        'DESENVOLVENDO': { color: 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30', icon: Clock },
+        'CONTRA': { color: 'bg-red-500/20 text-red-400 border-red-500/30', icon: AlertTriangle },
+    }[status] || { color: 'bg-gray-500/20 text-gray-400', icon: Target };
+    const Icon = config.icon;
+    return (
+        <Badge className={cn("text-[9px] px-1.5 py-0.5 border", config.color)}>
+            <Icon className="w-2.5 h-2.5 mr-1" />
+            {status}
+        </Badge>
+    );
+}
+
+// Risk profile badge
+function RiskBadge({ profile, score }: { profile?: string; score?: number }) {
+    const effectiveProfile = profile || (score ? classifyRiskProfile(score) : 'MODERATE');
+    const config = {
+        'SAFE': { color: 'bg-green-500/20 text-green-400 border-green-500/30', icon: Shield },
+        'MODERATE': { color: 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30', icon: Target },
+        'AGGRESSIVE': { color: 'bg-red-500/20 text-red-400 border-red-500/30', icon: Zap },
+    }[effectiveProfile] || { color: 'bg-gray-500/20 text-gray-400', icon: Target };
+    const Icon = config.icon;
+    return (
+        <Badge className={cn("text-[9px] px-1.5 py-0.5 border", config.color)}>
+            <Icon className="w-2.5 h-2.5 mr-1" />
+            {effectiveProfile}
+        </Badge>
+    );
 }
 
 
@@ -165,31 +214,128 @@ export const IncubatorView = () => {
                                         </div>
                                     </div>
 
-                                    {/* ASSET LIST */}
-                                    <div className="flex-1 p-4 space-y-3">
+                                    {/* ASSET LIST - Enhanced with SCAN data */}
+                                    <div className="flex-1 p-4 space-y-3 max-h-[400px] overflow-y-auto">
                                         {portfolio.assets.map(asset => {
                                             const curr = prices[asset.symbol] || asset.entryPrice;
                                             const change = ((curr - asset.entryPrice) / asset.entryPrice) * 100;
                                             const assetPnL = (curr - asset.entryPrice) * asset.lots * 100000;
-                                            const aProfit = assetPnL >= 0;
+                                            const aProfit = asset.side === 'LONG' ? assetPnL >= 0 : assetPnL <= 0;
+                                            const finalPnL = asset.side === 'SHORT' ? -assetPnL : assetPnL;
+                                            
+                                            // Dynamic R:R based on score
+                                            const score = asset.technicalScore || 50;
+                                            const { rr, lotMultiplier, maxRisk } = calculateDynamicRR(score);
+                                            const effectiveRR = asset.riskReward || rr;
+                                            const riskProfile = asset.riskProfile || classifyRiskProfile(score);
+                                            
+                                            // Calculate distance to SL/TP
+                                            const slDistance = asset.stopLoss ? Math.abs(curr - asset.stopLoss) : null;
+                                            const tp1Distance = asset.takeProfit1 ? Math.abs(asset.takeProfit1 - curr) : null;
 
                                             return (
-                                                <div key={asset.symbol} className="flex justify-between items-center text-sm border-b border-gray-800/50 last:border-0 pb-2 last:pb-0">
-                                                    <div>
-                                                        <div className="font-bold text-gray-200">{asset.symbol}</div>
-                                                        <div className="text-[10px] text-gray-500">
-                                                            Entry: {asset.entryPrice.toFixed(4)} | Lot: {asset.lots}
+                                                <div key={asset.symbol} className="border border-gray-800 rounded-lg p-3 bg-gray-950/50 hover:bg-gray-900/50 transition-all">
+                                                    {/* Header Row */}
+                                                    <div className="flex justify-between items-start mb-2">
+                                                        <div className="flex items-center gap-2">
+                                                            <span className="font-bold text-gray-200">{asset.symbol}</span>
+                                                            <Badge className={cn("text-[9px] px-1.5", 
+                                                                asset.side === 'LONG' ? "bg-green-500/20 text-green-400" : "bg-red-500/20 text-red-400"
+                                                            )}>
+                                                                {asset.side}
+                                                            </Badge>
+                                                            <StatusBadge status={asset.scenarioStatus} />
+                                                            <RiskBadge profile={riskProfile} score={score} />
+                                                        </div>
+                                                        <div className={cn("font-mono font-bold text-lg", finalPnL >= 0 ? "text-green-400" : "text-red-400")}>
+                                                            {finalPnL >= 0 ? '+' : ''}${finalPnL.toFixed(0)}
                                                         </div>
                                                     </div>
-                                                    <div className="text-right">
-                                                        <div className={cn("font-mono font-bold", aProfit ? "text-green-400" : "text-red-400")}>
-                                                            {aProfit ? '+' : ''}{assetPnL.toFixed(0)}
+                                                    
+                                                    {/* Score & R:R Row */}
+                                                    <div className="grid grid-cols-4 gap-2 mb-2 text-[10px]">
+                                                        <div className="bg-gray-800/50 rounded px-2 py-1 text-center">
+                                                            <div className="text-gray-500 uppercase">Score</div>
+                                                            <div className={cn("font-bold font-mono",
+                                                                score >= 75 ? "text-green-400" : score >= 55 ? "text-yellow-400" : "text-red-400"
+                                                            )}>{score}</div>
                                                         </div>
-                                                        <div className={cn("text-[10px] flex items-center justify-end gap-1", change >= 0 ? "text-green-500" : "text-red-500")}>
-                                                            {change >= 0 ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
-                                                            {change.toFixed(2)}%
+                                                        <div className="bg-gray-800/50 rounded px-2 py-1 text-center">
+                                                            <div className="text-gray-500 uppercase">R:R</div>
+                                                            <div className="font-bold font-mono text-blue-400">{effectiveRR.toFixed(1)}:1</div>
+                                                        </div>
+                                                        <div className="bg-gray-800/50 rounded px-2 py-1 text-center">
+                                                            <div className="text-gray-500 uppercase">Lots</div>
+                                                            <div className="font-bold font-mono text-purple-400">{asset.lots.toFixed(2)}</div>
+                                                        </div>
+                                                        <div className="bg-gray-800/50 rounded px-2 py-1 text-center">
+                                                            <div className="text-gray-500 uppercase">Max Risk</div>
+                                                            <div className="font-bold font-mono text-orange-400">{maxRisk}%</div>
                                                         </div>
                                                     </div>
+                                                    
+                                                    {/* Levels Row */}
+                                                    <div className="grid grid-cols-3 gap-2 mb-2 text-[10px]">
+                                                        <div className="text-center">
+                                                            <div className="text-gray-500">Entry</div>
+                                                            <div className="font-mono text-gray-300">{asset.entryPrice.toFixed(4)}</div>
+                                                        </div>
+                                                        <div className="text-center">
+                                                            <div className="text-red-500">SL</div>
+                                                            <div className="font-mono text-red-400">{asset.stopLoss?.toFixed(4) || '—'}</div>
+                                                        </div>
+                                                        <div className="text-center">
+                                                            <div className="text-green-500">TP1</div>
+                                                            <div className="font-mono text-green-400">{asset.takeProfit1?.toFixed(4) || '—'}</div>
+                                                        </div>
+                                                    </div>
+                                                    
+                                                    {/* Price Progress Bar */}
+                                                    {asset.stopLoss && asset.takeProfit1 && (
+                                                        <div className="mb-2">
+                                                            <div className="flex justify-between text-[9px] text-gray-500 mb-1">
+                                                                <span>SL</span>
+                                                                <span className="text-gray-400">Current: {curr.toFixed(4)}</span>
+                                                                <span>TP1</span>
+                                                            </div>
+                                                            <div className="h-2 bg-gray-800 rounded-full overflow-hidden">
+                                                                {(() => {
+                                                                    const range = Math.abs(asset.takeProfit1 - asset.stopLoss);
+                                                                    const progress = asset.side === 'LONG' 
+                                                                        ? ((curr - asset.stopLoss) / range) * 100
+                                                                        : ((asset.stopLoss - curr) / range) * 100;
+                                                                    const clampedProgress = Math.max(0, Math.min(100, progress));
+                                                                    return (
+                                                                        <div 
+                                                                            className={cn("h-full transition-all",
+                                                                                clampedProgress < 30 ? "bg-red-500" : 
+                                                                                clampedProgress < 70 ? "bg-yellow-500" : "bg-green-500"
+                                                                            )}
+                                                                            style={{ width: `${clampedProgress}%` }}
+                                                                        />
+                                                                    );
+                                                                })()}
+                                                            </div>
+                                                        </div>
+                                                    )}
+                                                    
+                                                    {/* Thesis */}
+                                                    {asset.thesis && (
+                                                        <div className="text-[10px] text-gray-500 bg-gray-800/30 rounded p-2 line-clamp-2">
+                                                            {asset.thesis}
+                                                        </div>
+                                                    )}
+                                                    
+                                                    {/* Confluences */}
+                                                    {asset.confluences && asset.confluences.length > 0 && (
+                                                        <div className="flex flex-wrap gap-1 mt-2">
+                                                            {asset.confluences.slice(0, 3).map((c, i) => (
+                                                                <span key={i} className="text-[9px] bg-blue-500/10 text-blue-400 px-1.5 py-0.5 rounded">
+                                                                    {c}
+                                                                </span>
+                                                            ))}
+                                                        </div>
+                                                    )}
                                                 </div>
                                             )
                                         })}

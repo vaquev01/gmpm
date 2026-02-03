@@ -72,6 +72,18 @@ export interface TrackedAsset {
     entryPrice: number;
     side: 'LONG' | 'SHORT';
     lots: number;
+    // SCAN/MICRO data
+    stopLoss?: number;
+    takeProfit1?: number;
+    takeProfit2?: number;
+    riskReward?: number;
+    technicalScore?: number;
+    scenarioStatus?: 'PRONTO' | 'DESENVOLVENDO' | 'CONTRA';
+    entryQuality?: 'OTIMO' | 'BOM' | 'RUIM';
+    riskProfile?: 'SAFE' | 'MODERATE' | 'AGGRESSIVE';
+    confluences?: string[];
+    thesis?: string;
+    mesoReason?: string;
 }
 
 export interface IncubatorPortfolio {
