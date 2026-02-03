@@ -8,8 +8,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
     Layers, TrendingUp, BarChart3, PieChart,
     Droplets, AlertTriangle, CheckCircle2, XCircle, Target,
-    Zap, Shield, DollarSign, Bitcoin, Gem, Building2, Factory,
-    Fuel, Pill, ArrowUpRight, ArrowDownRight, ArrowRight, RefreshCw
+    Zap, Shield, DollarSign, Bitcoin, Gem, Building2, Fuel, Pill, Factory,
+    ArrowUpRight, ArrowDownRight, ArrowRight, RefreshCw
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -25,6 +25,11 @@ interface ClassAnalysis {
     volatilityRisk: 'LOW' | 'MEDIUM' | 'HIGH';
     topPicks: string[];
     avoidList: string[];
+    performance: {
+        avgChange: number;
+        topPerformer: { symbol: string; change: number } | null;
+        worstPerformer: { symbol: string; change: number } | null;
+    };
 }
 
 interface SectorAnalysis {
@@ -43,24 +48,58 @@ interface MesoTilt {
     confidence: 'HIGH' | 'MEDIUM' | 'LOW';
 }
 
+interface TemporalFocus {
+    weeklyThesis: string;
+    dailyFocus: string[];
+    keyLevels: { asset: string; level: number; type: 'support' | 'resistance'; significance: string }[];
+    catalysts: { event: string; timing: string; impact: string; affectedClasses: string[] }[];
+    actionPlan: { timeframe: string; action: string; rationale: string }[];
+}
+
+interface ExecutiveSummary {
+    marketBias: 'RISK_ON' | 'RISK_OFF' | 'NEUTRAL';
+    regimeLabel: string;
+    vix: number | null;
+    yieldCurve: number | null;
+    dollarIndex: number | null;
+    fearGreed: number | null;
+    classBreakdown: {
+        bullish: string[];
+        bearish: string[];
+        neutral: string[];
+    };
+    oneLineSummary: string;
+}
+
 interface MesoData {
     success: boolean;
     timestamp: string;
+    executiveSummary: ExecutiveSummary;
     regime: {
         type: string;
         confidence: string;
         drivers: string[];
+        axes: Record<string, { direction: string; label: string }>;
     };
+    temporalFocus: TemporalFocus;
     classes: ClassAnalysis[];
     sectors: SectorAnalysis[];
     summary: {
-        topOpportunities: { class: string; picks: string[]; confidence: string }[];
+        topOpportunities: { class: string; picks: string[]; confidence: string; currentPerformance: number }[];
         riskWarnings: string[];
         tiltsActive: number;
         prohibitionsActive: number;
     };
     tilts: MesoTilt[];
     prohibitions: string[];
+    macro: {
+        vix?: number;
+        treasury10y?: number;
+        treasury2y?: number;
+        yieldCurve?: number;
+        dollarIndex?: number;
+        fearGreed?: number;
+    };
 }
 
 // Icons for asset classes
@@ -377,6 +416,185 @@ const TiltsPanel = ({ tilts, prohibitions }: { tilts: MesoTilt[]; prohibitions: 
     );
 };
 
+// Executive Summary Panel
+const ExecutiveSummaryPanel = ({ data }: { data: MesoData }) => {
+    const summary = data.executiveSummary;
+    const temporal = data.temporalFocus;
+    const biasColor = summary?.marketBias === 'RISK_ON' ? 'text-green-400 bg-green-500/20 border-green-500/30' :
+        summary?.marketBias === 'RISK_OFF' ? 'text-red-400 bg-red-500/20 border-red-500/30' :
+        'text-yellow-400 bg-yellow-500/20 border-yellow-500/30';
+
+    return (
+        <Card className="bg-gradient-to-r from-purple-950/30 via-gray-900 to-gray-900 border-purple-500/30">
+            <CardHeader className="pb-3">
+                <div className="flex items-center justify-between">
+                    <CardTitle className="flex items-center gap-2 text-purple-400">
+                        <Target className="w-5 h-5" />
+                        TESE DA SEMANA
+                    </CardTitle>
+                    <div className="flex items-center gap-3">
+                        <Badge className={cn("text-sm px-3 py-1", biasColor)}>
+                            {summary?.marketBias || 'NEUTRAL'}
+                        </Badge>
+                        <Badge variant="outline" className="text-purple-400 border-purple-500/50">
+                            {summary?.regimeLabel || data.regime.type}
+                        </Badge>
+                    </div>
+                </div>
+            </CardHeader>
+            <CardContent className="space-y-4">
+                {/* Weekly Thesis */}
+                <div className="p-4 bg-gray-800/50 rounded-lg border border-gray-700">
+                    <p className="text-lg text-gray-200 leading-relaxed">
+                        {temporal?.weeklyThesis || summary?.oneLineSummary || 'Análise em carregamento...'}
+                    </p>
+                </div>
+
+                {/* Key Metrics Row */}
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    <div className="text-center p-3 bg-gray-800/30 rounded">
+                        <div className="text-[10px] text-gray-500 uppercase">VIX</div>
+                        <div className={cn("text-xl font-bold font-mono",
+                            (data.macro?.vix || 0) > 25 ? "text-red-400" : (data.macro?.vix || 0) > 18 ? "text-yellow-400" : "text-green-400"
+                        )}>
+                            {data.macro?.vix?.toFixed(1) || '—'}
+                        </div>
+                    </div>
+                    <div className="text-center p-3 bg-gray-800/30 rounded">
+                        <div className="text-[10px] text-gray-500 uppercase">Yield Curve</div>
+                        <div className={cn("text-xl font-bold font-mono",
+                            (data.macro?.yieldCurve || 0) < 0 ? "text-red-400" : "text-green-400"
+                        )}>
+                            {data.macro?.yieldCurve?.toFixed(2) || '—'}%
+                        </div>
+                    </div>
+                    <div className="text-center p-3 bg-gray-800/30 rounded">
+                        <div className="text-[10px] text-gray-500 uppercase">Dollar Index</div>
+                        <div className="text-xl font-bold font-mono text-blue-400">
+                            {data.macro?.dollarIndex?.toFixed(1) || '—'}
+                        </div>
+                    </div>
+                    <div className="text-center p-3 bg-gray-800/30 rounded">
+                        <div className="text-[10px] text-gray-500 uppercase">Fear & Greed</div>
+                        <div className={cn("text-xl font-bold font-mono",
+                            (data.macro?.fearGreed || 50) > 60 ? "text-green-400" : (data.macro?.fearGreed || 50) < 40 ? "text-red-400" : "text-yellow-400"
+                        )}>
+                            {data.macro?.fearGreed || '—'}
+                        </div>
+                    </div>
+                </div>
+
+                {/* Class Breakdown */}
+                <div className="grid grid-cols-3 gap-4">
+                    <div className="p-3 bg-green-500/10 rounded border border-green-500/20">
+                        <div className="text-[10px] text-green-500 uppercase font-bold mb-2">BULLISH</div>
+                        <div className="flex flex-wrap gap-1">
+                            {summary?.classBreakdown?.bullish?.map((c, i) => (
+                                <span key={i} className="text-xs bg-green-500/20 px-2 py-0.5 rounded text-green-300">{c}</span>
+                            )) || <span className="text-xs text-gray-500">—</span>}
+                        </div>
+                    </div>
+                    <div className="p-3 bg-red-500/10 rounded border border-red-500/20">
+                        <div className="text-[10px] text-red-500 uppercase font-bold mb-2">BEARISH</div>
+                        <div className="flex flex-wrap gap-1">
+                            {summary?.classBreakdown?.bearish?.map((c, i) => (
+                                <span key={i} className="text-xs bg-red-500/20 px-2 py-0.5 rounded text-red-300">{c}</span>
+                            )) || <span className="text-xs text-gray-500">—</span>}
+                        </div>
+                    </div>
+                    <div className="p-3 bg-gray-500/10 rounded border border-gray-500/20">
+                        <div className="text-[10px] text-gray-500 uppercase font-bold mb-2">NEUTRO</div>
+                        <div className="flex flex-wrap gap-1">
+                            {summary?.classBreakdown?.neutral?.map((c, i) => (
+                                <span key={i} className="text-xs bg-gray-500/20 px-2 py-0.5 rounded text-gray-300">{c}</span>
+                            )) || <span className="text-xs text-gray-500">—</span>}
+                        </div>
+                    </div>
+                </div>
+            </CardContent>
+        </Card>
+    );
+};
+
+// Daily Focus Panel
+const DailyFocusPanel = ({ data }: { data: MesoData }) => {
+    const temporal = data.temporalFocus;
+
+    return (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            {/* Daily Focus */}
+            <Card className="bg-gray-900/80 border-cyan-500/30">
+                <CardHeader className="pb-2">
+                    <CardTitle className="flex items-center gap-2 text-cyan-400 text-base">
+                        <Zap className="w-4 h-4" />
+                        FOCO DO DIA
+                    </CardTitle>
+                </CardHeader>
+                <CardContent>
+                    <ul className="space-y-2">
+                        {temporal?.dailyFocus?.map((focus, i) => (
+                            <li key={i} className="flex items-start gap-2">
+                                <CheckCircle2 className="w-4 h-4 text-cyan-400 shrink-0 mt-0.5" />
+                                <span className="text-sm text-gray-300">{focus}</span>
+                            </li>
+                        )) || <li className="text-sm text-gray-500">Carregando...</li>}
+                    </ul>
+                </CardContent>
+            </Card>
+
+            {/* Action Plan */}
+            <Card className="bg-gray-900/80 border-yellow-500/30">
+                <CardHeader className="pb-2">
+                    <CardTitle className="flex items-center gap-2 text-yellow-400 text-base">
+                        <Target className="w-4 h-4" />
+                        PLANO DE AÇÃO
+                    </CardTitle>
+                </CardHeader>
+                <CardContent>
+                    <div className="space-y-3">
+                        {temporal?.actionPlan?.map((action, i) => (
+                            <div key={i} className="p-2 bg-gray-800/50 rounded border-l-2 border-yellow-500">
+                                <div className="flex items-center gap-2 mb-1">
+                                    <Badge variant="outline" className="text-[10px] text-yellow-400 border-yellow-500/50">
+                                        {action.timeframe}
+                                    </Badge>
+                                </div>
+                                <div className="text-sm font-medium text-gray-200">{action.action}</div>
+                                <div className="text-[11px] text-gray-500 mt-1">{action.rationale}</div>
+                            </div>
+                        )) || <div className="text-sm text-gray-500">Carregando...</div>}
+                    </div>
+                </CardContent>
+            </Card>
+        </div>
+    );
+};
+
+// Regime Axes Display
+const RegimeAxesPanel = ({ data }: { data: MesoData }) => {
+    const axes = data.regime.axes;
+    if (!axes) return null;
+
+    const axisColor = (dir: string) => {
+        if (dir.includes('↑↑')) return 'text-green-400 bg-green-500/20';
+        if (dir.includes('↑')) return 'text-green-300 bg-green-500/10';
+        if (dir.includes('↓↓')) return 'text-red-400 bg-red-500/20';
+        if (dir.includes('↓')) return 'text-red-300 bg-red-500/10';
+        return 'text-gray-400 bg-gray-500/10';
+    };
+
+    return (
+        <div className="flex flex-wrap gap-2">
+            {Object.entries(axes).map(([key, axis]) => (
+                <div key={key} className={cn("px-3 py-1.5 rounded-lg flex items-center gap-2", axisColor(axis.direction))}>
+                    <span className="text-[10px] uppercase font-bold opacity-70">{axis.label}</span>
+                    <span className="text-lg font-bold">{axis.direction}</span>
+                </div>
+            ))}
+        </div>
+    );
+};
+
 // Main Component
 export const MesoView = () => {
     const [data, setData] = useState<MesoData | null>(null);
@@ -447,32 +665,20 @@ export const MesoView = () => {
     return (
         <div className="space-y-6 max-w-[1700px] mx-auto pb-20">
             {/* Header */}
-            <div className="flex items-center justify-between border-b border-gray-800 pb-6">
+            <div className="flex items-center justify-between border-b border-gray-800 pb-4">
                 <div className="flex items-center gap-3">
                     <div className="p-3 bg-purple-500/10 rounded-lg border border-purple-500/20">
                         <Layers className="w-8 h-8 text-purple-400" />
                     </div>
                     <div>
-                        <h1 className="text-3xl font-bold text-gray-100 tracking-tight flex items-center gap-3">
+                        <h1 className="text-2xl font-bold text-gray-100 tracking-tight flex items-center gap-3">
                             MESO ANALYSIS
-                            <Badge variant="outline" className="border-purple-500 text-purple-400 bg-purple-500/10 text-[10px] tracking-widest">
-                                SECTOR & CLASS ROTATION
-                            </Badge>
                         </h1>
-                        <p className="text-sm text-gray-500">Asset class expectations, sector momentum, and liquidity conditions</p>
+                        <p className="text-xs text-gray-500">Foco semanal/diário por classe de ativos</p>
                     </div>
                 </div>
-                <div className="flex gap-4">
-                    <div className="text-right">
-                        <div className="text-[10px] text-gray-500 uppercase font-bold">Regime</div>
-                        <div className="text-sm font-bold text-purple-400">{data.regime.type}</div>
-                    </div>
-                    <div className="text-right">
-                        <div className="text-[10px] text-gray-500 uppercase font-bold">Last Update</div>
-                        <div className="text-xs text-gray-300 font-mono">
-                            {new Date(data.timestamp).toLocaleTimeString()}
-                        </div>
-                    </div>
+                <div className="flex items-center gap-4">
+                    <RegimeAxesPanel data={data} />
                     <button
                         onClick={fetchData}
                         className="p-2 bg-gray-800 rounded hover:bg-gray-700 transition-colors"
@@ -485,39 +691,45 @@ export const MesoView = () => {
                 </div>
             </div>
 
-            {/* Summary Bar */}
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+            {/* Executive Summary - Main Focus */}
+            <ExecutiveSummaryPanel data={data} />
+
+            {/* Daily Focus & Action Plan */}
+            <DailyFocusPanel data={data} />
+
+            {/* Quick Stats */}
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
                 <Card className="bg-gray-900/80 border-gray-800">
-                    <CardContent className="p-4 text-center">
-                        <div className="text-[10px] text-gray-500 uppercase">Bullish Classes</div>
-                        <div className="text-2xl font-bold text-green-400">{bullishClasses}</div>
+                    <CardContent className="p-3 text-center">
+                        <div className="text-[10px] text-gray-500 uppercase">Bullish</div>
+                        <div className="text-xl font-bold text-green-400">{bullishClasses}</div>
                     </CardContent>
                 </Card>
                 <Card className="bg-gray-900/80 border-gray-800">
-                    <CardContent className="p-4 text-center">
-                        <div className="text-[10px] text-gray-500 uppercase">Bearish Classes</div>
-                        <div className="text-2xl font-bold text-red-400">{bearishClasses}</div>
+                    <CardContent className="p-3 text-center">
+                        <div className="text-[10px] text-gray-500 uppercase">Bearish</div>
+                        <div className="text-xl font-bold text-red-400">{bearishClasses}</div>
                     </CardContent>
                 </Card>
                 <Card className="bg-gray-900/80 border-gray-800">
-                    <CardContent className="p-4 text-center">
+                    <CardContent className="p-3 text-center">
                         <div className="text-[10px] text-gray-500 uppercase">Avg Liquidity</div>
                         <div className={cn(
-                            "text-2xl font-bold",
+                            "text-xl font-bold",
                             avgLiquidity > 60 ? "text-green-400" : avgLiquidity > 40 ? "text-yellow-400" : "text-red-400"
                         )}>{avgLiquidity}</div>
                     </CardContent>
                 </Card>
                 <Card className="bg-gray-900/80 border-gray-800">
-                    <CardContent className="p-4 text-center">
-                        <div className="text-[10px] text-gray-500 uppercase">Active Tilts</div>
-                        <div className="text-2xl font-bold text-purple-400">{data.summary.tiltsActive}</div>
+                    <CardContent className="p-3 text-center">
+                        <div className="text-[10px] text-gray-500 uppercase">Tilts</div>
+                        <div className="text-xl font-bold text-purple-400">{data.summary.tiltsActive}</div>
                     </CardContent>
                 </Card>
                 <Card className="bg-gray-900/80 border-gray-800">
-                    <CardContent className="p-4 text-center">
-                        <div className="text-[10px] text-gray-500 uppercase">Prohibitions</div>
-                        <div className="text-2xl font-bold text-orange-400">{data.summary.prohibitionsActive}</div>
+                    <CardContent className="p-3 text-center">
+                        <div className="text-[10px] text-gray-500 uppercase">Proibições</div>
+                        <div className="text-xl font-bold text-orange-400">{data.summary.prohibitionsActive}</div>
                     </CardContent>
                 </Card>
             </div>

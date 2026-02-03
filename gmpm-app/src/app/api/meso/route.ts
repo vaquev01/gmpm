@@ -1,9 +1,10 @@
 import { NextResponse } from 'next/server';
 import type { RegimeSnapshot } from '@/lib/regimeEngine';
 
+const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3001';
+
 // Fetch regime snapshot from our own API
 async function fetchRegimeSnapshot(): Promise<RegimeSnapshot | null> {
-    const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3001';
     try {
         const res = await fetch(`${baseUrl}/api/regime`, { cache: 'no-store' });
         if (!res.ok) return null;
@@ -14,32 +15,72 @@ async function fetchRegimeSnapshot(): Promise<RegimeSnapshot | null> {
     }
 }
 
+// Fetch market data with real prices
+interface MarketAsset {
+    symbol: string;
+    name: string;
+    price: number;
+    change: number;
+    changePercent: number;
+    volume?: number;
+    assetClass?: string;
+}
+
+interface MacroData {
+    vix?: number;
+    vixChange?: number;
+    treasury10y?: number;
+    treasury2y?: number;
+    yieldCurve?: number;
+    dollarIndex?: number;
+    fearGreed?: number;
+}
+
+async function fetchMarketData(): Promise<{ assets: MarketAsset[], macro: MacroData }> {
+    try {
+        const res = await fetch(`${baseUrl}/api/market?limit=150`, { cache: 'no-store' });
+        if (!res.ok) return { assets: [], macro: {} };
+        const data = await res.json();
+        return { 
+            assets: data.assets || [], 
+            macro: data.macro || {} 
+        };
+    } catch {
+        return { assets: [], macro: {} };
+    }
+}
+
 // Asset class definitions with sectors
 const ASSET_CLASSES = {
     stocks: {
         name: 'Equities',
         sectors: ['Technology', 'Financials', 'Healthcare', 'Consumer', 'Energy', 'Industrials'],
         symbols: ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'NVDA', 'META', 'JPM', 'V', 'JNJ', 'XOM'],
+        benchmarks: ['^GSPC', '^DJI', '^IXIC'],
     },
     crypto: {
         name: 'Crypto',
-        sectors: ['Layer 1', 'DeFi', 'Meme', 'Stablecoins'],
+        sectors: ['Layer 1', 'DeFi', 'Meme'],
         symbols: ['BTC-USD', 'ETH-USD', 'SOL-USD', 'XRP-USD', 'DOGE-USD'],
+        benchmarks: ['BTC-USD'],
     },
     forex: {
         name: 'Forex',
         sectors: ['Majors', 'Commodity FX', 'EM FX'],
         symbols: ['EURUSD=X', 'GBPUSD=X', 'USDJPY=X', 'AUDUSD=X', 'USDCAD=X'],
+        benchmarks: ['DX=F'],
     },
     commodities: {
         name: 'Commodities',
         sectors: ['Metals', 'Energy', 'Agriculture'],
         symbols: ['GC=F', 'SI=F', 'CL=F', 'NG=F', 'ZC=F'],
+        benchmarks: ['GC=F', 'CL=F'],
     },
     bonds: {
         name: 'Fixed Income',
         sectors: ['Treasuries', 'Corporate', 'High Yield'],
         symbols: ['TLT', 'IEF', 'HYG', 'LQD', 'BND'],
+        benchmarks: ['^TNX'],
     },
 };
 
@@ -424,10 +465,175 @@ function deriveSectorAnalysis(regime: RegimeSnapshot): SectorAnalysis[] {
     return sectors;
 }
 
+// Generate weekly/daily focus based on regime and market conditions
+function generateTemporalFocus(
+    regime: RegimeSnapshot,
+    macro: MacroData,
+    classAnalysis: ClassAnalysis[]
+): {
+    weeklyThesis: string;
+    dailyFocus: string[];
+    keyLevels: { asset: string; level: number; type: 'support' | 'resistance'; significance: string }[];
+    catalysts: { event: string; timing: string; impact: string; affectedClasses: string[] }[];
+    actionPlan: { timeframe: string; action: string; rationale: string }[];
+} {
+    const regimeType = regime.regime;
+    const vix = macro.vix || 20;
+    const yieldCurve = macro.yieldCurve || 0;
+    
+    // Weekly thesis based on regime
+    let weeklyThesis = '';
+    const dailyFocus: string[] = [];
+    
+    switch (regimeType) {
+        case 'GOLDILOCKS':
+            weeklyThesis = 'Ambiente favorável para risco. Crescimento saudável com inflação controlada. Priorizar long em equities e crypto. Bonds neutro a negativo.';
+            dailyFocus.push('Buscar pullbacks em tech leaders para entrada');
+            dailyFocus.push('Monitorar BTC como termômetro de apetite a risco');
+            dailyFocus.push('Evitar shorts - tendência de alta predomina');
+            break;
+        case 'REFLATION':
+            weeklyThesis = 'Economia acelerando com inflação subindo. Favorecer commodities, energy e value stocks. Evitar bonds de longa duration.';
+            dailyFocus.push('Ouro e prata como hedge de inflação');
+            dailyFocus.push('Energy stocks em momentum positivo');
+            dailyFocus.push('Reduzir exposição a growth stocks');
+            break;
+        case 'STAGFLATION':
+            weeklyThesis = 'Cenário adverso: inflação alta com crescimento fraco. Defensivo é a palavra. Ouro, cash e utilities. Evitar risco.';
+            dailyFocus.push('Gold como proteção principal');
+            dailyFocus.push('Evitar equities cíclicas');
+            dailyFocus.push('Considerar shorts táticos em tech');
+            break;
+        case 'DEFLATION':
+            weeklyThesis = 'Risco de contração econômica. Flight to quality para treasuries. Evitar commodities e crypto.';
+            dailyFocus.push('Long TLT e bonds de qualidade');
+            dailyFocus.push('Evitar todo risco cíclico');
+            dailyFocus.push('Cash é posição válida');
+            break;
+        case 'RISK_OFF':
+            weeklyThesis = 'Aversão a risco elevada. Preservação de capital é prioridade. Treasuries, USD e ouro. Evitar equities e crypto.';
+            dailyFocus.push('Reduzir exposição imediatamente');
+            dailyFocus.push('Safe havens: USD, JPY, CHF, Gold');
+            dailyFocus.push('Não tentar pegar facas caindo');
+            break;
+        case 'RISK_ON':
+            weeklyThesis = 'Apetite por risco retornando. Momento de aumentar exposição gradualmente. Favorece equities e crypto.';
+            dailyFocus.push('Aumentar beta gradualmente');
+            dailyFocus.push('Crypto pode liderar o rally');
+            dailyFocus.push('Reduzir hedges defensivos');
+            break;
+        default:
+            weeklyThesis = 'Regime misto - cautela recomendada. Manter posições balanceadas e aguardar definição de tendência.';
+            dailyFocus.push('Manter stops apertados');
+            dailyFocus.push('Tamanho de posição reduzido');
+            dailyFocus.push('Aguardar confirmação de direção');
+    }
+    
+    // Key levels based on VIX
+    const keyLevels: { asset: string; level: number; type: 'support' | 'resistance'; significance: string }[] = [];
+    
+    if (vix < 15) {
+        keyLevels.push({ asset: 'VIX', level: 12, type: 'support', significance: 'Complacência extrema - risco de spike' });
+        keyLevels.push({ asset: 'SPX', level: 5000, type: 'resistance', significance: 'Nível psicológico' });
+    } else if (vix > 25) {
+        keyLevels.push({ asset: 'VIX', level: 30, type: 'resistance', significance: 'Pico de medo - possível reversão' });
+        keyLevels.push({ asset: 'SPX', level: 4500, type: 'support', significance: 'Suporte técnico importante' });
+    }
+    
+    if (yieldCurve < -0.5) {
+        keyLevels.push({ asset: '10Y-2Y Spread', level: -0.5, type: 'support', significance: 'Inversão profunda - sinal recessivo' });
+    }
+    
+    // Catalysts for the week
+    const catalysts: { event: string; timing: string; impact: string; affectedClasses: string[] }[] = [
+        { 
+            event: 'Fed Minutes / Decisão de Juros', 
+            timing: 'Verificar calendário', 
+            impact: vix > 20 ? 'ALTO' : 'MÉDIO',
+            affectedClasses: ['bonds', 'stocks', 'forex']
+        },
+        { 
+            event: 'Dados de Inflação (CPI/PCE)', 
+            timing: 'Verificar calendário', 
+            impact: 'ALTO',
+            affectedClasses: ['bonds', 'commodities', 'forex']
+        },
+        { 
+            event: 'Earnings Season', 
+            timing: 'Contínuo', 
+            impact: 'ALTO para stocks individuais',
+            affectedClasses: ['stocks']
+        },
+    ];
+    
+    // Action plan based on conviction
+    const bullishClasses = classAnalysis.filter(c => c.expectation === 'BULLISH' && c.confidence !== 'LOW');
+    const bearishClasses = classAnalysis.filter(c => c.expectation === 'BEARISH');
+    
+    const actionPlan: { timeframe: string; action: string; rationale: string }[] = [];
+    
+    if (bullishClasses.length > 0) {
+        const topBullish = bullishClasses[0];
+        actionPlan.push({
+            timeframe: 'Esta semana',
+            action: `Aumentar exposição em ${topBullish.name}`,
+            rationale: topBullish.drivers.join('; ')
+        });
+    }
+    
+    if (bearishClasses.length > 0) {
+        const topBearish = bearishClasses[0];
+        actionPlan.push({
+            timeframe: 'Esta semana',
+            action: `Reduzir/evitar ${topBearish.name}`,
+            rationale: topBearish.drivers.join('; ')
+        });
+    }
+    
+    actionPlan.push({
+        timeframe: 'Diário',
+        action: vix > 25 ? 'Stops mais largos, tamanho reduzido' : 'Gestão normal de risco',
+        rationale: `VIX em ${vix.toFixed(1)} - ${vix > 25 ? 'volatilidade elevada' : 'volatilidade normal'}`
+    });
+    
+    return { weeklyThesis, dailyFocus, keyLevels, catalysts, actionPlan };
+}
+
+// Calculate class performance from real market data
+function calculateClassPerformance(
+    classKey: string,
+    assets: MarketAsset[]
+): { avgChange: number; topPerformer: { symbol: string; change: number } | null; worstPerformer: { symbol: string; change: number } | null; count: number } {
+    const classInfo = ASSET_CLASSES[classKey as keyof typeof ASSET_CLASSES];
+    if (!classInfo) return { avgChange: 0, topPerformer: null, worstPerformer: null, count: 0 };
+    
+    const classAssets = assets.filter(a => 
+        classInfo.symbols.includes(a.symbol) || 
+        classInfo.benchmarks.includes(a.symbol) ||
+        a.assetClass === classKey
+    );
+    
+    if (classAssets.length === 0) return { avgChange: 0, topPerformer: null, worstPerformer: null, count: 0 };
+    
+    const avgChange = classAssets.reduce((sum, a) => sum + (a.changePercent || 0), 0) / classAssets.length;
+    
+    const sorted = [...classAssets].sort((a, b) => (b.changePercent || 0) - (a.changePercent || 0));
+    
+    return {
+        avgChange,
+        topPerformer: sorted[0] ? { symbol: sorted[0].symbol, change: sorted[0].changePercent } : null,
+        worstPerformer: sorted[sorted.length - 1] ? { symbol: sorted[sorted.length - 1].symbol, change: sorted[sorted.length - 1].changePercent } : null,
+        count: classAssets.length
+    };
+}
+
 export async function GET() {
     try {
-        // Fetch regime snapshot
-        const regime = await fetchRegimeSnapshot();
+        // Fetch regime snapshot AND market data in parallel
+        const [regime, marketData] = await Promise.all([
+            fetchRegimeSnapshot(),
+            fetchMarketData()
+        ]);
 
         if (!regime) {
             return NextResponse.json({
@@ -436,10 +642,16 @@ export async function GET() {
             }, { status: 500 });
         }
 
-        // Analyze each asset class
-        const classAnalysis: ClassAnalysis[] = Object.keys(ASSET_CLASSES).map(cls =>
-            deriveClassExpectation(cls, regime)
-        );
+        const { assets, macro } = marketData;
+
+        // Analyze each asset class with real performance data
+        const classAnalysis: (ClassAnalysis & { 
+            performance: { avgChange: number; topPerformer: { symbol: string; change: number } | null; worstPerformer: { symbol: string; change: number } | null };
+        })[] = Object.keys(ASSET_CLASSES).map(cls => {
+            const baseAnalysis = deriveClassExpectation(cls, regime);
+            const performance = calculateClassPerformance(cls, assets);
+            return { ...baseAnalysis, performance };
+        });
 
         // Sector analysis
         const sectorAnalysis = deriveSectorAnalysis(regime);
@@ -452,6 +664,9 @@ export async function GET() {
             return scoreB - scoreA;
         });
 
+        // Generate temporal focus
+        const temporalFocus = generateTemporalFocus(regime, macro, classAnalysis);
+
         // Top opportunities across all classes
         const topOpportunities = classAnalysis
             .filter(c => c.direction === 'LONG' && c.expectation === 'BULLISH')
@@ -460,6 +675,7 @@ export async function GET() {
                 class: c.name,
                 picks: c.topPicks,
                 confidence: c.confidence,
+                currentPerformance: c.performance.avgChange,
             }));
 
         // Risk warnings
@@ -467,14 +683,47 @@ export async function GET() {
             .filter(c => c.direction === 'AVOID' || c.volatilityRisk === 'HIGH')
             .map(c => `${c.name}: ${c.drivers[0] || 'High risk'}`);
 
+        // Executive summary
+        const bullishCount = classAnalysis.filter(c => c.expectation === 'BULLISH').length;
+        const bearishCount = classAnalysis.filter(c => c.expectation === 'BEARISH').length;
+        
+        let marketBias: 'RISK_ON' | 'RISK_OFF' | 'NEUTRAL' = 'NEUTRAL';
+        if (bullishCount >= 3) marketBias = 'RISK_ON';
+        else if (bearishCount >= 3) marketBias = 'RISK_OFF';
+
+        const executiveSummary = {
+            marketBias,
+            regimeLabel: regime.regime,
+            vix: macro.vix || null,
+            yieldCurve: macro.yieldCurve || null,
+            dollarIndex: macro.dollarIndex || null,
+            fearGreed: macro.fearGreed || null,
+            classBreakdown: {
+                bullish: classAnalysis.filter(c => c.expectation === 'BULLISH').map(c => c.name),
+                bearish: classAnalysis.filter(c => c.expectation === 'BEARISH').map(c => c.name),
+                neutral: classAnalysis.filter(c => c.expectation === 'NEUTRAL' || c.expectation === 'MIXED').map(c => c.name),
+            },
+            oneLineSummary: temporalFocus.weeklyThesis,
+        };
+
         return NextResponse.json({
             success: true,
             timestamp: new Date().toISOString(),
+            executiveSummary,
             regime: {
                 type: regime.regime,
                 confidence: regime.regimeConfidence,
                 drivers: regime.dominantDrivers,
+                axes: {
+                    G: { direction: regime.axes.G.direction, label: 'Growth' },
+                    I: { direction: regime.axes.I.direction, label: 'Inflation' },
+                    L: { direction: regime.axes.L.direction, label: 'Liquidity' },
+                    C: { direction: regime.axes.C.direction, label: 'Credit' },
+                    D: { direction: regime.axes.D.direction, label: 'Dollar' },
+                    V: { direction: regime.axes.V.direction, label: 'Volatility' },
+                },
             },
+            temporalFocus,
             classes: classAnalysis,
             sectors: sectorAnalysis,
             summary: {
@@ -485,6 +734,14 @@ export async function GET() {
             },
             tilts: regime.mesoTilts,
             prohibitions: regime.mesoProhibitions,
+            macro: {
+                vix: macro.vix,
+                treasury10y: macro.treasury10y,
+                treasury2y: macro.treasury2y,
+                yieldCurve: macro.yieldCurve,
+                dollarIndex: macro.dollarIndex,
+                fearGreed: macro.fearGreed,
+            },
         });
     } catch (error) {
         console.error('Meso API error:', error);
