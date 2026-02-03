@@ -361,6 +361,114 @@ function computeConfluenceScore(asset: RealAssetData) {
     };
 }
 
+// --- FOCUS 24H PANEL (Meso → Micro) ---
+const Focus24hPanel = ({ mesoData }: { 
+    mesoData: {
+        weeklyThesis: string;
+        dailyFocus: string[];
+        favoredDirection: 'LONG' | 'SHORT' | 'NEUTRAL';
+        volatilityContext: 'HIGH' | 'NORMAL' | 'LOW';
+        allowedInstruments: { symbol: string; direction: 'LONG' | 'SHORT'; class: string; reason: string }[];
+        prohibitedInstruments: { symbol: string; reason: string }[];
+        marketBias: 'RISK_ON' | 'RISK_OFF' | 'NEUTRAL';
+    } | null 
+}) => {
+    if (!mesoData) return null;
+
+    const biasColor = mesoData.marketBias === 'RISK_ON' ? 'text-green-400 bg-green-500/20' :
+        mesoData.marketBias === 'RISK_OFF' ? 'text-red-400 bg-red-500/20' : 'text-yellow-400 bg-yellow-500/20';
+    
+    const dirColor = mesoData.favoredDirection === 'LONG' ? 'text-green-400' :
+        mesoData.favoredDirection === 'SHORT' ? 'text-red-400' : 'text-gray-400';
+
+    const volColor = mesoData.volatilityContext === 'HIGH' ? 'text-red-400' :
+        mesoData.volatilityContext === 'LOW' ? 'text-green-400' : 'text-yellow-400';
+
+    return (
+        <Card className="bg-gradient-to-r from-cyan-950/30 to-gray-900 border-cyan-500/30 mb-4">
+            <CardContent className="p-4">
+                <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center gap-2 text-cyan-400">
+                        <Target className="w-4 h-4" />
+                        <span className="text-xs font-bold uppercase tracking-wider">FOCO 24H</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                        <span className={cn("text-[10px] font-bold px-2 py-0.5 rounded", biasColor)}>
+                            {mesoData.marketBias}
+                        </span>
+                        <span className={cn("text-[10px] font-mono", dirColor)}>
+                            Favored: {mesoData.favoredDirection}
+                        </span>
+                        <span className={cn("text-[10px] font-mono", volColor)}>
+                            Vol: {mesoData.volatilityContext}
+                        </span>
+                    </div>
+                </div>
+
+                {/* Daily Focus */}
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                    <div className="lg:col-span-2">
+                        <div className="text-[10px] text-gray-500 uppercase mb-2">Thesis</div>
+                        <p className="text-sm text-gray-200 leading-relaxed">{mesoData.weeklyThesis}</p>
+                        
+                        {mesoData.dailyFocus.length > 0 && (
+                            <div className="mt-3">
+                                <div className="text-[10px] text-gray-500 uppercase mb-1">Daily Focus</div>
+                                <ul className="space-y-1">
+                                    {mesoData.dailyFocus.map((f, i) => (
+                                        <li key={i} className="text-[11px] text-gray-400 flex items-start gap-1">
+                                            <CheckCircle2 className="w-3 h-3 text-cyan-400 mt-0.5 flex-shrink-0" />
+                                            {f}
+                                        </li>
+                                    ))}
+                                </ul>
+                            </div>
+                        )}
+                    </div>
+
+                    <div className="space-y-3">
+                        {/* Allowed */}
+                        <div>
+                            <div className="text-[10px] text-green-500 uppercase mb-1 flex items-center gap-1">
+                                <CheckCircle2 className="w-3 h-3" /> Monitorar ({mesoData.allowedInstruments.length})
+                            </div>
+                            <div className="flex flex-wrap gap-1">
+                                {mesoData.allowedInstruments.slice(0, 6).map((inst, i) => (
+                                    <span key={i} className={cn(
+                                        "text-[10px] px-1.5 py-0.5 rounded font-mono",
+                                        inst.direction === 'LONG' ? 'bg-green-500/20 text-green-300' : 'bg-red-500/20 text-red-300'
+                                    )}>
+                                        {inst.symbol.split(' ')[0]}
+                                    </span>
+                                ))}
+                                {mesoData.allowedInstruments.length > 6 && (
+                                    <span className="text-[10px] text-gray-500">+{mesoData.allowedInstruments.length - 6}</span>
+                                )}
+                            </div>
+                        </div>
+
+                        {/* Prohibited */}
+                        {mesoData.prohibitedInstruments.length > 0 && (
+                            <div>
+                                <div className="text-[10px] text-red-500 uppercase mb-1 flex items-center gap-1">
+                                    <AlertTriangle className="w-3 h-3" /> Evitar ({mesoData.prohibitedInstruments.length})
+                                </div>
+                                <div className="flex flex-wrap gap-1">
+                                    {mesoData.prohibitedInstruments.slice(0, 4).map((inst, i) => (
+                                        <span key={i} className="text-[10px] bg-red-500/10 border border-red-500/30 text-red-400 px-1.5 py-0.5 rounded">
+                                            {inst.symbol}
+                                        </span>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            </CardContent>
+        </Card>
+    );
+};
+
 // --- REGIME PANEL (Framework Institucional) ---
 const AxisBadge = ({ axis }: { axis: AxisScore }) => {
     const directionIcon = axis.direction.includes('↑') 
@@ -1086,6 +1194,17 @@ export const CommandView = () => {
     const [regime, setRegime] = useState<RegimeSnapshot | null>(null);
     const [regimeLoading, setRegimeLoading] = useState(true);
 
+    // MESO LAYER STATE (24h Focus)
+    const [mesoData, setMesoData] = useState<{
+        weeklyThesis: string;
+        dailyFocus: string[];
+        favoredDirection: 'LONG' | 'SHORT' | 'NEUTRAL';
+        volatilityContext: 'HIGH' | 'NORMAL' | 'LOW';
+        allowedInstruments: { symbol: string; direction: 'LONG' | 'SHORT'; class: string; reason: string }[];
+        prohibitedInstruments: { symbol: string; reason: string }[];
+        marketBias: 'RISK_ON' | 'RISK_OFF' | 'NEUTRAL';
+    } | null>(null);
+
     // TOGGLE SELECTION
     const toggleSelection = (symbol: string, e: React.MouseEvent) => {
         e.stopPropagation();
@@ -1352,24 +1471,43 @@ export const CommandView = () => {
         return () => clearInterval(interval);
     }, [fetchData]);
 
-    // FETCH REGIME
+    // FETCH REGIME + MESO
     useEffect(() => {
         let alive = true;
-        const fetchRegime = async () => {
+        const fetchRegimeAndMeso = async () => {
             try {
-                const res = await fetch('/api/regime', { cache: 'no-store' });
-                const data = await res.json();
-                if (alive && data.success && data.snapshot) {
-                    setRegime(data.snapshot as RegimeSnapshot);
+                // Fetch both in parallel
+                const [regimeRes, mesoRes] = await Promise.all([
+                    fetch('/api/regime', { cache: 'no-store' }),
+                    fetch('/api/meso', { cache: 'no-store' })
+                ]);
+                
+                const regimeData = await regimeRes.json();
+                const mesoDataRes = await mesoRes.json();
+                
+                if (alive && regimeData.success && regimeData.snapshot) {
+                    setRegime(regimeData.snapshot as RegimeSnapshot);
+                }
+                
+                if (alive && mesoDataRes.success) {
+                    setMesoData({
+                        weeklyThesis: mesoDataRes.temporalFocus?.weeklyThesis || '',
+                        dailyFocus: mesoDataRes.temporalFocus?.dailyFocus || [],
+                        favoredDirection: mesoDataRes.microInputs?.favoredDirection || 'NEUTRAL',
+                        volatilityContext: mesoDataRes.microInputs?.volatilityContext || 'NORMAL',
+                        allowedInstruments: mesoDataRes.microInputs?.allowedInstruments || [],
+                        prohibitedInstruments: mesoDataRes.microInputs?.prohibitedInstruments || [],
+                        marketBias: mesoDataRes.executiveSummary?.marketBias || 'NEUTRAL',
+                    });
                 }
             } catch (e) {
-                console.error('Regime fetch error', e);
+                console.error('Regime/Meso fetch error', e);
             } finally {
                 if (alive) setRegimeLoading(false);
             }
         };
-        fetchRegime();
-        const interval = setInterval(fetchRegime, 60000); // Sync with market data
+        fetchRegimeAndMeso();
+        const interval = setInterval(fetchRegimeAndMeso, 60000); // Sync with market data
         return () => { alive = false; clearInterval(interval); };
     }, []);
 
@@ -1448,6 +1586,9 @@ export const CommandView = () => {
 
             {/* 0. REGIME ENGINE (Institutional Framework) */}
             <RegimePanel regime={regime} loading={regimeLoading} />
+
+            {/* 0.5. FOCUS 24H (Meso → Micro) */}
+            <Focus24hPanel mesoData={mesoData} />
 
             {/* 1. EXECUTION STATUS (Micro-Capital) */}
             <ExecutionStatusPanel />
