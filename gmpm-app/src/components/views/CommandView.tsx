@@ -2426,6 +2426,7 @@ export const CommandView = () => {
                                     <TableRow className="hover:bg-transparent border-gray-800">
                                         <TableHead className="h-9 w-10 text-center text-gray-600">#</TableHead>
                                         <TableHead className="h-9 text-gray-400 font-bold w-16">Asset</TableHead>
+                                        <TableHead className="h-9 text-cyan-400 font-bold w-24">Price</TableHead>
                                         <TableHead className="h-9 text-gray-500 font-bold w-40 hidden md:table-cell">Name</TableHead>
                                         <TableHead className="h-9 text-gray-500 font-bold w-20 hidden md:table-cell">Type</TableHead>
                                         <TableHead className="h-9 text-gray-500 font-bold w-20 hidden md:table-cell">Sector</TableHead>
@@ -2477,6 +2478,27 @@ export const CommandView = () => {
                                                     <div>
                                                         {row.displaySymbol}
                                                         <div className="text-[9px] text-gray-600 font-normal md:hidden">{row.name?.substring(0, 10)}</div>
+                                                    </div>
+                                                </TableCell>
+                                                <TableCell>
+                                                    <div className="flex flex-col">
+                                                        <span className="font-bold text-cyan-300">{row.price.toFixed(row.price < 10 ? 4 : 2)}</span>
+                                                        <div className="flex items-center gap-1">
+                                                            <span className={cn("text-[9px] font-bold", row.changePercent >= 0 ? "text-green-500" : "text-red-500")}>
+                                                                {row.changePercent >= 0 ? '▲' : '▼'} {Math.abs(row.changePercent).toFixed(2)}%
+                                                            </span>
+                                                            {/* Price vs Entry radar */}
+                                                            {row.entry && (
+                                                                <span className={cn("text-[8px] px-1 rounded", 
+                                                                    Math.abs(row.price - parseFloat(row.entry)) / row.price < 0.005 ? "bg-green-500/30 text-green-400" :
+                                                                    Math.abs(row.price - parseFloat(row.entry)) / row.price < 0.01 ? "bg-yellow-500/30 text-yellow-400" :
+                                                                    "bg-gray-500/20 text-gray-500"
+                                                                )}>
+                                                                    {Math.abs(row.price - parseFloat(row.entry)) / row.price < 0.005 ? '● ZONE' :
+                                                                     Math.abs(row.price - parseFloat(row.entry)) / row.price < 0.01 ? '○ NEAR' : ''}
+                                                                </span>
+                                                            )}
+                                                        </div>
                                                     </div>
                                                 </TableCell>
                                                 <TableCell className="text-xs text-gray-500 hidden md:table-cell truncate max-w-[200px]" title={row.name}>{row.name}</TableCell>
