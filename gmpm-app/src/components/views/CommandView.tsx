@@ -1988,18 +1988,17 @@ export const CommandView = () => {
                     // Professional Execution Levels (Dynamic R:R based on volatility)
                     const dailyRange = (asset.high && asset.low) ? (asset.high - asset.low) : (asset.price * 0.015);
                     const entry = asset.price;
+                    const dailyRangePercent = entry > 0 ? (dailyRange / entry) : 0.015;
+                    const safeDailyRangePercent = Number.isFinite(dailyRangePercent) ? dailyRangePercent : 0.015;
+                    const atrPercent = Math.max(0.003, Math.min(0.02, safeDailyRangePercent));
+                    const atr = entry * atrPercent;
                     
-                    // Dynamic SL/TP based on asset class volatility
-                    const volMultiplier = asset.assetClass === 'crypto' ? 1.5 : 
-                        asset.assetClass === 'commodity' ? 1.2 : 1.0;
-                    const atr = dailyRange * volMultiplier;
-                    
-                    // SL: Tighter for high-score setups, wider for lower scores
-                    const slMultiplier = score > 70 ? 0.8 : score > 55 ? 1.0 : 1.2;
+                    // SL/TP based on normalized ATR% (keeps targets realistic across assets)
+                    const slMultiplier = score > 70 ? 0.55 : score > 55 ? 0.65 : 0.8;
                     const sl = signal === 'LONG' ? entry - (atr * slMultiplier) : entry + (atr * slMultiplier);
                     
-                    // TP: Dynamic based on trend strength and volatility
-                    const tpMultiplier = score > 70 ? 2.5 : score > 55 ? 2.0 : 1.5;
+                    // Scanner shows TP1 (MICRO provides TP ladder)
+                    const tpMultiplier = score > 70 ? 1.15 : score > 55 ? 1.0 : 0.85;
                     const tp = signal === 'LONG' ? entry + (atr * tpMultiplier) : entry - (atr * tpMultiplier);
                     
                     // Calculate actual R:R
@@ -2008,8 +2007,8 @@ export const CommandView = () => {
                     const rrValue = risk > 0 ? (reward / risk) : 0;
                     
                     // Determine timeframe based on volatility
-                    const timeframe = dailyRange / entry > 0.03 ? 'H4' : 
-                        dailyRange / entry > 0.015 ? 'H1' : 'M15';
+                    const timeframe = atrPercent > 0.015 ? 'H4' : 
+                        atrPercent > 0.008 ? 'H1' : 'M15';
                     
                     // Count confluences
                     const confluenceCount = confluence.breakdown?.components ? 
@@ -2066,11 +2065,19 @@ export const CommandView = () => {
 
         const entry = asset.price;
         const dailyRange = (asset.high && asset.low) ? (asset.high - asset.low) : (asset.price * 0.015);
-        const sl = asset.signal === 'LONG' ? entry - dailyRange : entry + dailyRange;
+        const dailyRangePercent = entry > 0 ? (dailyRange / entry) : 0.015;
+        const safeDailyRangePercent = Number.isFinite(dailyRangePercent) ? dailyRangePercent : 0.015;
+        const atrPercent = Math.max(0.003, Math.min(0.02, safeDailyRangePercent));
+        const atr = entry * atrPercent;
 
-        const tp1 = asset.signal === 'LONG' ? entry + (dailyRange * 2) : entry - (dailyRange * 2);
-        const tp2 = asset.signal === 'LONG' ? entry + (dailyRange * 3.5) : entry - (dailyRange * 3.5);
-        const tp3 = asset.signal === 'LONG' ? entry + (dailyRange * 5) : entry - (dailyRange * 5);
+        const slMultiplier = asset.score > 70 ? 0.55 : asset.score > 55 ? 0.65 : 0.8;
+        const tp1Multiplier = asset.score > 70 ? 1.15 : asset.score > 55 ? 1.0 : 0.85;
+
+        const sl = asset.signal === 'LONG' ? entry - (atr * slMultiplier) : entry + (atr * slMultiplier);
+
+        const tp1 = asset.signal === 'LONG' ? entry + (atr * tp1Multiplier) : entry - (atr * tp1Multiplier);
+        const tp2 = asset.signal === 'LONG' ? entry + (atr * (tp1Multiplier * 1.5)) : entry - (atr * (tp1Multiplier * 1.5));
+        const tp3 = asset.signal === 'LONG' ? entry + (atr * (tp1Multiplier * 2.0)) : entry - (atr * (tp1Multiplier * 2.0));
 
         // EVALUATE GATES (Institutional Framework)
         let gatesResult: GateSummary | null = null;
