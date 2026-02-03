@@ -82,19 +82,32 @@ interface MicroAnalysis {
     };
 }
 
-// Fetch meso inputs
-async function fetchMesoInputs(): Promise<MesoInput[]> {
+// Fetch meso inputs with full context
+async function fetchMesoInputs(): Promise<{ 
+    instruments: MesoInput[]; 
+    prohibited: string[];
+    context: { favoredDirection: string; volatilityContext: string; regime: string; bias: string };
+}> {
     try {
         const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000';
         const res = await fetch(`${baseUrl}/api/meso`, { cache: 'no-store' });
         const data = await res.json();
-        if (data.success && data.microInputs?.allowedInstruments) {
-            return data.microInputs.allowedInstruments;
+        if (data.success) {
+            return {
+                instruments: data.microInputs?.allowedInstruments || [],
+                prohibited: data.microInputs?.prohibitedInstruments?.map((p: { symbol: string }) => p.symbol) || [],
+                context: {
+                    favoredDirection: data.microInputs?.favoredDirection || 'NEUTRAL',
+                    volatilityContext: data.microInputs?.volatilityContext || 'NORMAL',
+                    regime: data.regime?.type || 'NEUTRAL',
+                    bias: data.executiveSummary?.marketBias || 'NEUTRAL',
+                }
+            };
         }
     } catch (e) {
         console.error('Failed to fetch meso inputs:', e);
     }
-    return [];
+    return { instruments: [], prohibited: [], context: { favoredDirection: 'NEUTRAL', volatilityContext: 'NORMAL', regime: 'NEUTRAL', bias: 'NEUTRAL' } };
 }
 
 // Fetch market data for a symbol
@@ -421,107 +434,50 @@ function generateRecommendation(setups: Setup[]): {
     };
 }
 
-// Core tradeable assets for micro analysis when MESO doesn't provide specific instruments
-const CORE_ASSETS = [
-    // Major Forex
-    { symbol: 'EURUSD=X', class: 'forex' },
-    { symbol: 'GBPUSD=X', class: 'forex' },
-    { symbol: 'USDJPY=X', class: 'forex' },
-    { symbol: 'AUDUSD=X', class: 'forex' },
-    // Commodities
-    { symbol: 'GC=F', class: 'commodities' },
-    { symbol: 'CL=F', class: 'commodities' },
-    { symbol: 'SI=F', class: 'commodities' },
-    // Crypto
-    { symbol: 'BTC-USD', class: 'crypto' },
-    { symbol: 'ETH-USD', class: 'crypto' },
-    { symbol: 'SOL-USD', class: 'crypto' },
-    // Indices/ETFs
-    { symbol: 'SPY', class: 'stocks' },
-    { symbol: 'QQQ', class: 'stocks' },
-    // Stocks
-    { symbol: 'AAPL', class: 'stocks' },
-    { symbol: 'NVDA', class: 'stocks' },
-    { symbol: 'TSLA', class: 'stocks' },
-];
-
-// Fetch MESO context for regime and direction
-async function fetchMesoContext(): Promise<{
-    favoredDirection: 'LONG' | 'SHORT' | 'NEUTRAL';
-    volatilityContext: 'HIGH' | 'NORMAL' | 'LOW';
-    marketBias: 'RISK_ON' | 'RISK_OFF' | 'NEUTRAL';
-    regimeType: string;
-    bullishClasses: string[];
-    bearishClasses: string[];
-}> {
-    try {
-        const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000';
-        const res = await fetch(`${baseUrl}/api/meso`, { cache: 'no-store' });
-        const data = await res.json();
-        if (data.success) {
-            return {
-                favoredDirection: data.microInputs?.favoredDirection || 'NEUTRAL',
-                volatilityContext: data.microInputs?.volatilityContext || 'NORMAL',
-                marketBias: data.executiveSummary?.marketBias || 'NEUTRAL',
-                regimeType: data.regime?.type || 'NEUTRAL',
-                bullishClasses: data.classes?.filter((c: { expectation: string }) => c.expectation === 'BULLISH').map((c: { class: string }) => c.class) || [],
-                bearishClasses: data.classes?.filter((c: { expectation: string }) => c.expectation === 'BEARISH').map((c: { class: string }) => c.class) || [],
-            };
-        }
-    } catch (e) {
-        console.error('Failed to fetch meso context:', e);
-    }
-    return { favoredDirection: 'NEUTRAL', volatilityContext: 'NORMAL', marketBias: 'NEUTRAL', regimeType: 'NEUTRAL', bullishClasses: [], bearishClasses: [] };
-}
-
 export async function GET() {
     try {
-        // 1. Fetch MESO context (regime, direction, bias)
-        const mesoContext = await fetchMesoContext();
-        const mesoInputs = await fetchMesoInputs();
+        // 1. Fetch MESO inputs with full context
+        const mesoData = await fetchMesoInputs();
+        const { instruments, prohibited, context } = mesoData;
         
-        // 2. Determine which assets to analyze
-        // If MESO provides real instruments, use those; otherwise scan core assets
-        const hasRealInstruments = mesoInputs.some(i => 
-            !i.symbol.includes('Neutral') && !i.symbol.includes('Reduced') && !i.symbol.includes('gates')
+        // 2. Filter to only real instruments (not placeholders)
+        const realInstruments = instruments.filter((i: MesoInput) => 
+            i.symbol && 
+            !i.symbol.includes('Neutral') && 
+            !i.symbol.includes('Reduced') && 
+            !i.symbol.includes('gates')
         );
         
-        let assetsToAnalyze: { symbol: string; direction: 'LONG' | 'SHORT'; class: string; reason: string }[] = [];
-        
-        if (hasRealInstruments) {
-            assetsToAnalyze = mesoInputs.filter(i => 
-                !i.symbol.includes('Neutral') && !i.symbol.includes('Reduced')
-            );
-        } else {
-            // Generate analysis for core assets based on MESO context
-            assetsToAnalyze = CORE_ASSETS.map(asset => {
-                let direction: 'LONG' | 'SHORT' = 'LONG';
-                let reason = 'Scanning for opportunities';
-                
-                // Determine direction based on MESO context
-                if (mesoContext.bullishClasses.includes(asset.class)) {
-                    direction = 'LONG';
-                    reason = `${asset.class} bullish in current regime`;
-                } else if (mesoContext.bearishClasses.includes(asset.class)) {
-                    direction = 'SHORT';
-                    reason = `${asset.class} bearish in current regime`;
-                } else if (mesoContext.favoredDirection !== 'NEUTRAL') {
-                    direction = mesoContext.favoredDirection;
-                    reason = `MESO favors ${direction}`;
-                }
-                
-                return { symbol: asset.symbol, direction, class: asset.class, reason };
+        // If no real instruments from MESO, return early with clear message
+        if (realInstruments.length === 0) {
+            return NextResponse.json({
+                success: true,
+                timestamp: new Date().toISOString(),
+                analyses: [],
+                mesoContext: context,
+                summary: {
+                    total: 0,
+                    withSetups: 0,
+                    executeReady: 0,
+                    regime: context.regime,
+                    bias: context.bias,
+                    message: `Regime ${context.regime}: Aguardando instrumentos de qualidade do MESO. Nenhuma classe com direção clara.`,
+                },
+                prohibited,
             });
         }
         
-        // 3. Fetch market data for all symbols
-        const symbols = assetsToAnalyze.map(i => i.symbol);
+        // 3. Fetch market data for MESO-approved symbols only
+        const symbols = realInstruments.map((i: MesoInput) => i.symbol);
         const marketData = await fetchMarketData(symbols);
         
-        // 4. Generate technical analysis for each
+        // 4. Generate technical analysis for MESO-approved instruments only
         const analyses: MicroAnalysis[] = [];
         
-        for (const input of assetsToAnalyze) {
+        for (const input of realInstruments) {
+            // Check if symbol is prohibited
+            if (prohibited.includes(input.symbol)) continue;
+            
             const data = marketData.get(input.symbol) || 
                 Array.from(marketData.entries()).find(([k]) => k.includes(input.symbol) || input.symbol.includes(k))?.[1];
             
@@ -529,21 +485,22 @@ export async function GET() {
             
             const technical = generateTechnicalAnalysis(input.symbol, data);
             
-            // Adjust score based on MESO context
-            let mesoBonus = 0;
-            if (mesoContext.bullishClasses.includes(input.class) && input.direction === 'LONG') mesoBonus = 10;
-            if (mesoContext.bearishClasses.includes(input.class) && input.direction === 'SHORT') mesoBonus = 10;
-            if (mesoContext.volatilityContext === 'HIGH') mesoBonus -= 5; // Penalize high vol
-            
+            // MESO already filtered, so direction is trusted
             const setups = generateSetups(input.symbol, input.symbol, data.price, technical, input.direction);
             
-            // Apply MESO bonus to setups
+            // Add MESO conviction bonus
             for (const setup of setups) {
-                setup.technicalScore = Math.min(100, setup.technicalScore + mesoBonus);
-                if (mesoBonus > 0) setup.confluences.push('MESO regime aligned');
+                setup.technicalScore = Math.min(100, setup.technicalScore + 15);
+                setup.confluences.push('MESO direção confirmada');
+                setup.mesoAlignment = true;
             }
             
             const recommendation = generateRecommendation(setups);
+            
+            // Include MESO reason in thesis
+            if (recommendation.bestSetup) {
+                recommendation.bestSetup.thesis = `${input.reason} | ${recommendation.bestSetup.thesis}`;
+            }
             
             analyses.push({
                 symbol: input.symbol,
@@ -555,7 +512,7 @@ export async function GET() {
             });
         }
         
-        // 5. Sort by recommendation action (EXECUTE first), then by score
+        // 5. Sort by MESO score first, then by technical score
         analyses.sort((a, b) => {
             const order = { EXECUTE: 0, WAIT: 1, AVOID: 2 };
             const orderDiff = order[a.recommendation.action] - order[b.recommendation.action];
@@ -570,20 +527,21 @@ export async function GET() {
             success: true,
             timestamp: new Date().toISOString(),
             analyses,
-            mesoContext,
+            mesoContext: context,
             summary: {
                 total: analyses.length,
                 withSetups,
                 executeReady,
-                regime: mesoContext.regimeType,
-                bias: mesoContext.marketBias,
+                regime: context.regime,
+                bias: context.bias,
                 message: executeReady > 0 
-                    ? `${executeReady} setup(s) ready for execution (${mesoContext.regimeType} regime)`
+                    ? `${executeReady} setup(s) MESO-validado(s) prontos (Regime: ${context.regime})`
                     : withSetups > 0 
-                        ? `${withSetups} setup(s) identified, waiting for confirmation`
-                        : 'Scanning market - no high-conviction setups currently',
+                        ? `${withSetups} setup(s) identificados, aguardando confirmação técnica`
+                        : `Regime ${context.regime}: Nenhum setup de alta convicção no momento`,
             },
-            mesoInputs: mesoInputs.slice(0, 10),
+            prohibited,
+            mesoInstruments: realInstruments.slice(0, 10),
         });
     } catch (error) {
         console.error('Micro API error:', error);

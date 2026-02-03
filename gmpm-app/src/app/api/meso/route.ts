@@ -707,61 +707,125 @@ export async function GET() {
         };
 
         // Generate allowed/prohibited instruments for MICRO layer (next 24h focus)
-        const allowedInstruments: { symbol: string; direction: 'LONG' | 'SHORT'; class: string; reason: string }[] = [];
+        // QUALITY FOCUS: 1-2 high-conviction instruments per class with clear direction
+        const allowedInstruments: { symbol: string; direction: 'LONG' | 'SHORT'; class: string; reason: string; score: number }[] = [];
         const prohibitedInstruments: { symbol: string; reason: string }[] = [];
 
         for (const cls of classAnalysis) {
-            if (cls.direction === 'LONG' && (cls.expectation === 'BULLISH' || cls.expectation === 'MIXED')) {
-                cls.topPicks.forEach(pick => {
-                    allowedInstruments.push({
-                        symbol: pick,
-                        direction: 'LONG',
-                        class: cls.name,
-                        reason: cls.drivers[0] || 'Aligned with regime'
-                    });
-                });
-            } else if (cls.direction === 'SHORT' && cls.expectation === 'BEARISH') {
-                cls.topPicks.forEach(pick => {
-                    allowedInstruments.push({
-                        symbol: pick,
-                        direction: 'SHORT',
-                        class: cls.name,
-                        reason: cls.drivers[0] || 'Bearish regime'
-                    });
-                });
-            }
-            
-            if (cls.direction === 'AVOID') {
+            const classInfo = ASSET_CLASSES[cls.class as keyof typeof ASSET_CLASSES];
+            if (!classInfo) continue;
+
+            // Only generate instruments for classes with clear direction (not AVOID or low confidence)
+            if (cls.direction === 'AVOID' || cls.confidence === 'LOW') {
                 cls.avoidList.forEach(avoid => {
                     prohibitedInstruments.push({
                         symbol: avoid,
                         reason: `${cls.name}: ${cls.drivers[0] || 'Regime prohibition'}`
                     });
                 });
+                // Add all class symbols to prohibited if AVOID
+                if (cls.direction === 'AVOID') {
+                    classInfo.symbols.forEach(sym => {
+                        if (!prohibitedInstruments.find(p => p.symbol === sym)) {
+                            prohibitedInstruments.push({
+                                symbol: sym,
+                                reason: `${cls.name}: Direction is AVOID in current regime`
+                            });
+                        }
+                    });
+                }
+                continue;
             }
+
+            // Calculate conviction score for this class
+            const convictionScore = cls.liquidityScore + (cls.confidence === 'HIGH' ? 30 : cls.confidence === 'MEDIUM' ? 15 : 0);
+            
+            // Use performance data to pick best instruments
+            const perf = cls.performance;
+            const instrumentsToAdd: { symbol: string; score: number; reason: string }[] = [];
+
+            // For BULLISH: pick top performers
+            if (cls.expectation === 'BULLISH' && cls.direction === 'LONG') {
+                // Add top performer if exists
+                if (perf.topPerformer && perf.topPerformer.change > 0) {
+                    instrumentsToAdd.push({
+                        symbol: perf.topPerformer.symbol,
+                        score: convictionScore + 20,
+                        reason: `Top performer +${perf.topPerformer.change.toFixed(2)}% | ${cls.drivers[0] || 'Bullish regime'}`
+                    });
+                }
+                // Add from topPicks if defined
+                cls.topPicks.slice(0, 2).forEach(pick => {
+                    if (!instrumentsToAdd.find(i => i.symbol === pick)) {
+                        instrumentsToAdd.push({
+                            symbol: pick,
+                            score: convictionScore,
+                            reason: cls.drivers[0] || 'Aligned with regime'
+                        });
+                    }
+                });
+                // Fallback to class symbols
+                if (instrumentsToAdd.length === 0) {
+                    classInfo.symbols.slice(0, 2).forEach(sym => {
+                        instrumentsToAdd.push({
+                            symbol: sym,
+                            score: convictionScore - 10,
+                            reason: `${cls.name} bullish bias`
+                        });
+                    });
+                }
+            }
+            // For BEARISH: pick worst performers for SHORT
+            else if (cls.expectation === 'BEARISH' && cls.direction === 'SHORT') {
+                if (perf.worstPerformer && perf.worstPerformer.change < 0) {
+                    instrumentsToAdd.push({
+                        symbol: perf.worstPerformer.symbol,
+                        score: convictionScore + 20,
+                        reason: `Worst performer ${perf.worstPerformer.change.toFixed(2)}% | ${cls.drivers[0] || 'Bearish regime'}`
+                    });
+                }
+                cls.topPicks.slice(0, 2).forEach(pick => {
+                    if (!instrumentsToAdd.find(i => i.symbol === pick)) {
+                        instrumentsToAdd.push({
+                            symbol: pick,
+                            score: convictionScore,
+                            reason: cls.drivers[0] || 'Bearish regime'
+                        });
+                    }
+                });
+            }
+            // For MIXED/NEUTRAL with direction: be selective
+            else if (cls.direction === 'LONG' || cls.direction === 'SHORT') {
+                // Only add if we have performance data
+                if (cls.direction === 'LONG' && perf.topPerformer && perf.topPerformer.change > 1) {
+                    instrumentsToAdd.push({
+                        symbol: perf.topPerformer.symbol,
+                        score: convictionScore,
+                        reason: `Strong momentum +${perf.topPerformer.change.toFixed(2)}%`
+                    });
+                } else if (cls.direction === 'SHORT' && perf.worstPerformer && perf.worstPerformer.change < -1) {
+                    instrumentsToAdd.push({
+                        symbol: perf.worstPerformer.symbol,
+                        score: convictionScore,
+                        reason: `Weak momentum ${perf.worstPerformer.change.toFixed(2)}%`
+                    });
+                }
+            }
+
+            // Add top 2 instruments per class (quality over quantity)
+            instrumentsToAdd.slice(0, 2).forEach(inst => {
+                allowedInstruments.push({
+                    symbol: inst.symbol,
+                    direction: cls.direction === 'LONG' ? 'LONG' : 'SHORT',
+                    class: cls.name,
+                    reason: inst.reason,
+                    score: inst.score
+                });
+            });
         }
 
-        // Add tilt-based instruments
-        regime.mesoTilts.slice(0, 5).forEach(tilt => {
-            if (!allowedInstruments.find(a => a.symbol === tilt.asset)) {
-                allowedInstruments.push({
-                    symbol: tilt.asset,
-                    direction: tilt.direction === 'LONG' ? 'LONG' : 'SHORT',
-                    class: 'tilt',
-                    reason: tilt.rationale
-                });
-            }
-        });
-
-        // Add prohibition-based instruments
-        regime.mesoProhibitions.forEach(prohibition => {
-            if (!prohibitedInstruments.find(p => p.symbol === prohibition)) {
-                prohibitedInstruments.push({
-                    symbol: prohibition,
-                    reason: 'Regime prohibition'
-                });
-            }
-        });
+        // Sort by conviction score and limit to top 10
+        allowedInstruments.sort((a, b) => b.score - a.score);
 
         return NextResponse.json({
             success: true,
