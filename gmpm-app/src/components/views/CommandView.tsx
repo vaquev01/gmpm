@@ -13,7 +13,7 @@ import type { RegimeSnapshot, AxisScore, GateSummary, TradeContext } from '@/lib
 import { evaluateGates } from '@/lib/regimeEngine';
 import { addSignal, calculateStats, type PerformanceStats } from '@/lib/signalHistory';
 import {
-    Zap, CheckCircle2,
+    Zap, CheckCircle2, XCircle,
     Brain, Globe, Shield, Activity, TrendingUp, Search, Layers, RefreshCw, X, Target, TrendingDown,
     Rocket, Briefcase, AlertTriangle, ArrowUp, ArrowDown, Minus
 } from 'lucide-react';
@@ -360,6 +360,159 @@ function computeConfluenceScore(asset: RealAssetData) {
         oneLiner,
     };
 }
+
+// --- INSTITUTIONAL GATES PANEL (Binary Decision Framework) ---
+const InstitutionalGatesPanel = ({ 
+    regime, 
+    mesoData, 
+    microSetups 
+}: { 
+    regime: RegimeSnapshot | null;
+    mesoData: {
+        favoredDirection: 'LONG' | 'SHORT' | 'NEUTRAL';
+        volatilityContext: 'HIGH' | 'NORMAL' | 'LOW';
+        marketBias: 'RISK_ON' | 'RISK_OFF' | 'NEUTRAL';
+        allowedInstruments: { symbol: string; direction: 'LONG' | 'SHORT' }[];
+        prohibitedInstruments: { symbol: string }[];
+    } | null;
+    microSetups: { action: 'EXECUTE' | 'WAIT' | 'AVOID'; setup: unknown }[];
+}) => {
+    // Calculate gate statuses
+    const macroGate = {
+        status: !regime ? 'LOADING' : 
+            regime.regimeConfidence === 'UNAVAILABLE' ? 'FAIL' :
+            regime.axes.L.direction === '↓↓' || regime.axes.C.direction === '↓↓' ? 'FAIL' :
+            regime.regimeConfidence === 'OK' ? 'PASS' : 'WARN',
+        label: 'MACRO',
+        detail: regime ? `${regime.regime} (${regime.regimeConfidence})` : 'Loading...',
+    };
+
+    const mesoGate = {
+        status: !mesoData ? 'LOADING' :
+            mesoData.allowedInstruments.length === 0 ? 'FAIL' :
+            mesoData.volatilityContext === 'HIGH' ? 'WARN' : 'PASS',
+        label: 'MESO',
+        detail: mesoData ? `${mesoData.allowedInstruments.length} allowed, ${mesoData.prohibitedInstruments.length} blocked` : 'Loading...',
+    };
+
+    const executeCount = microSetups.filter(s => s.action === 'EXECUTE').length;
+    const microGate = {
+        status: microSetups.length === 0 ? 'LOADING' :
+            executeCount === 0 ? 'WARN' : 'PASS',
+        label: 'MICRO',
+        detail: `${executeCount} ready, ${microSetups.filter(s => s.action === 'WAIT').length} waiting`,
+    };
+
+    const now = new Date();
+    const hour = now.getUTCHours();
+    const goodHours = [7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
+    const badHours = [21, 22, 23, 0, 1, 2, 3];
+    const execGate = {
+        status: badHours.includes(hour) ? 'WARN' : goodHours.includes(hour) ? 'PASS' : 'WARN',
+        label: 'EXEC',
+        detail: goodHours.includes(hour) ? 'Optimal window' : badHours.includes(hour) ? 'Low liquidity' : 'Fair liquidity',
+    };
+
+    const riskGate = {
+        status: mesoData?.volatilityContext === 'HIGH' ? 'WARN' : 'PASS',
+        label: 'RISK',
+        detail: mesoData ? `Vol: ${mesoData.volatilityContext}` : 'OK',
+    };
+
+    const gates = [macroGate, mesoGate, microGate, riskGate, execGate];
+    const allPass = gates.every(g => g.status === 'PASS');
+    const anyFail = gates.some(g => g.status === 'FAIL');
+    const anyLoading = gates.some(g => g.status === 'LOADING');
+
+    const gateColors = {
+        PASS: 'bg-green-500/20 border-green-500/50 text-green-400',
+        WARN: 'bg-yellow-500/20 border-yellow-500/50 text-yellow-400',
+        FAIL: 'bg-red-500/20 border-red-500/50 text-red-400',
+        LOADING: 'bg-gray-500/20 border-gray-500/50 text-gray-400',
+    };
+
+    const statusIcon = {
+        PASS: <CheckCircle2 className="w-4 h-4" />,
+        WARN: <AlertTriangle className="w-4 h-4" />,
+        FAIL: <XCircle className="w-4 h-4" />,
+        LOADING: <RefreshCw className="w-4 h-4 animate-spin" />,
+    };
+
+    return (
+        <Card className={cn(
+            "border-2 mb-4 transition-all",
+            anyLoading ? "bg-gray-900/80 border-gray-700" :
+            allPass ? "bg-green-950/30 border-green-500/50" :
+            anyFail ? "bg-red-950/30 border-red-500/50" :
+            "bg-yellow-950/30 border-yellow-500/50"
+        )}>
+            <CardContent className="p-4">
+                <div className="flex items-center justify-between mb-4">
+                    <div className="flex items-center gap-2">
+                        <Shield className="w-5 h-5 text-purple-400" />
+                        <span className="text-sm font-bold uppercase tracking-wider text-purple-400">
+                            INSTITUTIONAL GATES
+                        </span>
+                    </div>
+                    <div className={cn(
+                        "text-sm font-bold px-3 py-1 rounded-full",
+                        anyLoading ? "bg-gray-500/20 text-gray-400" :
+                        allPass ? "bg-green-500/20 text-green-400" :
+                        anyFail ? "bg-red-500/20 text-red-400" :
+                        "bg-yellow-500/20 text-yellow-400"
+                    )}>
+                        {anyLoading ? 'LOADING' : allPass ? 'ALL PASS ✓' : anyFail ? 'BLOCKED' : 'CAUTION'}
+                    </div>
+                </div>
+
+                <div className="grid grid-cols-5 gap-2">
+                    {gates.map((gate) => (
+                        <div 
+                            key={gate.label}
+                            className={cn(
+                                "p-2 rounded border text-center transition-all",
+                                gateColors[gate.status as keyof typeof gateColors]
+                            )}
+                        >
+                            <div className="flex items-center justify-center gap-1 mb-1">
+                                {statusIcon[gate.status as keyof typeof statusIcon]}
+                                <span className="text-xs font-bold">{gate.label}</span>
+                            </div>
+                            <div className="text-[9px] opacity-80 truncate" title={gate.detail}>
+                                {gate.detail}
+                            </div>
+                        </div>
+                    ))}
+                </div>
+
+                {/* Pipeline Summary */}
+                <div className="mt-3 pt-3 border-t border-gray-800 flex items-center justify-between text-[10px]">
+                    <div className="flex items-center gap-4">
+                        <span className="text-gray-500">
+                            MACRO → MESO → MICRO → EXEC
+                        </span>
+                        {regime && (
+                            <span className="text-gray-400">
+                                Regime: <span className="text-purple-400 font-bold">{regime.regime}</span>
+                            </span>
+                        )}
+                        {mesoData && (
+                            <span className="text-gray-400">
+                                Bias: <span className={cn("font-bold",
+                                    mesoData.marketBias === 'RISK_ON' ? 'text-green-400' :
+                                    mesoData.marketBias === 'RISK_OFF' ? 'text-red-400' : 'text-gray-400'
+                                )}>{mesoData.marketBias}</span>
+                            </span>
+                        )}
+                    </div>
+                    <div className="text-gray-500">
+                        {new Date().toLocaleTimeString()} UTC
+                    </div>
+                </div>
+            </CardContent>
+        </Card>
+    );
+};
 
 // --- MICRO SETUPS PANEL (Pipeline Output) ---
 const MicroSetupsPanel = ({ setups, onSelectAsset }: { 
@@ -1722,7 +1875,10 @@ export const CommandView = () => {
                 </Card>
             )}
 
-            {/* 0. REGIME ENGINE (Institutional Framework) */}
+            {/* 0. INSTITUTIONAL GATES (Binary Decision Framework) */}
+            <InstitutionalGatesPanel regime={regime} mesoData={mesoData} microSetups={microSetups} />
+
+            {/* 0.1. REGIME ENGINE (Institutional Framework) */}
             <RegimePanel regime={regime} loading={regimeLoading} />
 
             {/* 0.5. FOCUS 24H (Meso → Micro) */}
