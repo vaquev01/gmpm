@@ -607,10 +607,10 @@ function calculateClassPerformance(
     const classInfo = ASSET_CLASSES[classKey as keyof typeof ASSET_CLASSES];
     if (!classInfo) return { avgChange: 0, topPerformer: null, worstPerformer: null, count: 0 };
     
+    // STRICT: Only use symbols explicitly defined in ASSET_CLASSES (not all market assets)
     const classAssets = assets.filter(a => 
         classInfo.symbols.includes(a.symbol) || 
-        classInfo.benchmarks.includes(a.symbol) ||
-        a.assetClass === classKey
+        classInfo.benchmarks.includes(a.symbol)
     );
     
     if (classAssets.length === 0) return { avgChange: 0, topPerformer: null, worstPerformer: null, count: 0 };
