@@ -85,7 +85,7 @@ interface MicroAnalysis {
 // Fetch meso inputs
 async function fetchMesoInputs(): Promise<MesoInput[]> {
     try {
-        const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3001';
+        const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000';
         const res = await fetch(`${baseUrl}/api/meso`, { cache: 'no-store' });
         const data = await res.json();
         if (data.success && data.microInputs?.allowedInstruments) {
@@ -101,7 +101,7 @@ async function fetchMesoInputs(): Promise<MesoInput[]> {
 async function fetchMarketData(symbols: string[]): Promise<Map<string, { price: number; high: number; low: number; volume: number; rsi: number; history: number[] }>> {
     const result = new Map();
     try {
-        const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3001';
+        const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000';
         const res = await fetch(`${baseUrl}/api/market?limit=300`, { cache: 'no-store' });
         const data = await res.json();
         if (data.success && Array.isArray(data.data)) {
@@ -421,46 +421,133 @@ function generateRecommendation(setups: Setup[]): {
     };
 }
 
+// Core tradeable assets for micro analysis when MESO doesn't provide specific instruments
+const CORE_ASSETS = [
+    // Major Forex
+    { symbol: 'EURUSD=X', class: 'forex' },
+    { symbol: 'GBPUSD=X', class: 'forex' },
+    { symbol: 'USDJPY=X', class: 'forex' },
+    { symbol: 'AUDUSD=X', class: 'forex' },
+    // Commodities
+    { symbol: 'GC=F', class: 'commodities' },
+    { symbol: 'CL=F', class: 'commodities' },
+    { symbol: 'SI=F', class: 'commodities' },
+    // Crypto
+    { symbol: 'BTC-USD', class: 'crypto' },
+    { symbol: 'ETH-USD', class: 'crypto' },
+    { symbol: 'SOL-USD', class: 'crypto' },
+    // Indices/ETFs
+    { symbol: 'SPY', class: 'stocks' },
+    { symbol: 'QQQ', class: 'stocks' },
+    // Stocks
+    { symbol: 'AAPL', class: 'stocks' },
+    { symbol: 'NVDA', class: 'stocks' },
+    { symbol: 'TSLA', class: 'stocks' },
+];
+
+// Fetch MESO context for regime and direction
+async function fetchMesoContext(): Promise<{
+    favoredDirection: 'LONG' | 'SHORT' | 'NEUTRAL';
+    volatilityContext: 'HIGH' | 'NORMAL' | 'LOW';
+    marketBias: 'RISK_ON' | 'RISK_OFF' | 'NEUTRAL';
+    regimeType: string;
+    bullishClasses: string[];
+    bearishClasses: string[];
+}> {
+    try {
+        const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000';
+        const res = await fetch(`${baseUrl}/api/meso`, { cache: 'no-store' });
+        const data = await res.json();
+        if (data.success) {
+            return {
+                favoredDirection: data.microInputs?.favoredDirection || 'NEUTRAL',
+                volatilityContext: data.microInputs?.volatilityContext || 'NORMAL',
+                marketBias: data.executiveSummary?.marketBias || 'NEUTRAL',
+                regimeType: data.regime?.type || 'NEUTRAL',
+                bullishClasses: data.classes?.filter((c: { expectation: string }) => c.expectation === 'BULLISH').map((c: { class: string }) => c.class) || [],
+                bearishClasses: data.classes?.filter((c: { expectation: string }) => c.expectation === 'BEARISH').map((c: { class: string }) => c.class) || [],
+            };
+        }
+    } catch (e) {
+        console.error('Failed to fetch meso context:', e);
+    }
+    return { favoredDirection: 'NEUTRAL', volatilityContext: 'NORMAL', marketBias: 'NEUTRAL', regimeType: 'NEUTRAL', bullishClasses: [], bearishClasses: [] };
+}
+
 export async function GET() {
     try {
-        // 1. Fetch meso inputs (allowed instruments)
+        // 1. Fetch MESO context (regime, direction, bias)
+        const mesoContext = await fetchMesoContext();
         const mesoInputs = await fetchMesoInputs();
         
-        if (mesoInputs.length === 0) {
-            return NextResponse.json({
-                success: true,
-                timestamp: new Date().toISOString(),
-                analyses: [],
-                summary: {
-                    total: 0,
-                    withSetups: 0,
-                    executeReady: 0,
-                    message: 'No allowed instruments from MESO layer',
-                },
+        // 2. Determine which assets to analyze
+        // If MESO provides real instruments, use those; otherwise scan core assets
+        const hasRealInstruments = mesoInputs.some(i => 
+            !i.symbol.includes('Neutral') && !i.symbol.includes('Reduced') && !i.symbol.includes('gates')
+        );
+        
+        let assetsToAnalyze: { symbol: string; direction: 'LONG' | 'SHORT'; class: string; reason: string }[] = [];
+        
+        if (hasRealInstruments) {
+            assetsToAnalyze = mesoInputs.filter(i => 
+                !i.symbol.includes('Neutral') && !i.symbol.includes('Reduced')
+            );
+        } else {
+            // Generate analysis for core assets based on MESO context
+            assetsToAnalyze = CORE_ASSETS.map(asset => {
+                let direction: 'LONG' | 'SHORT' = 'LONG';
+                let reason = 'Scanning for opportunities';
+                
+                // Determine direction based on MESO context
+                if (mesoContext.bullishClasses.includes(asset.class)) {
+                    direction = 'LONG';
+                    reason = `${asset.class} bullish in current regime`;
+                } else if (mesoContext.bearishClasses.includes(asset.class)) {
+                    direction = 'SHORT';
+                    reason = `${asset.class} bearish in current regime`;
+                } else if (mesoContext.favoredDirection !== 'NEUTRAL') {
+                    direction = mesoContext.favoredDirection;
+                    reason = `MESO favors ${direction}`;
+                }
+                
+                return { symbol: asset.symbol, direction, class: asset.class, reason };
             });
         }
         
-        // 2. Fetch market data for these symbols
-        const symbols = mesoInputs.map(i => i.symbol.split(' ')[0]);
+        // 3. Fetch market data for all symbols
+        const symbols = assetsToAnalyze.map(i => i.symbol);
         const marketData = await fetchMarketData(symbols);
         
-        // 3. Generate technical analysis for each
+        // 4. Generate technical analysis for each
         const analyses: MicroAnalysis[] = [];
         
-        for (const input of mesoInputs) {
-            const symbolKey = input.symbol.split(' ')[0];
-            const data = marketData.get(symbolKey) || 
-                Array.from(marketData.entries()).find(([k]) => k.includes(symbolKey))?.[1];
+        for (const input of assetsToAnalyze) {
+            const data = marketData.get(input.symbol) || 
+                Array.from(marketData.entries()).find(([k]) => k.includes(input.symbol) || input.symbol.includes(k))?.[1];
             
             if (!data) continue;
             
             const technical = generateTechnicalAnalysis(input.symbol, data);
-            const setups = generateSetups(input.symbol, symbolKey, data.price, technical, input.direction);
+            
+            // Adjust score based on MESO context
+            let mesoBonus = 0;
+            if (mesoContext.bullishClasses.includes(input.class) && input.direction === 'LONG') mesoBonus = 10;
+            if (mesoContext.bearishClasses.includes(input.class) && input.direction === 'SHORT') mesoBonus = 10;
+            if (mesoContext.volatilityContext === 'HIGH') mesoBonus -= 5; // Penalize high vol
+            
+            const setups = generateSetups(input.symbol, input.symbol, data.price, technical, input.direction);
+            
+            // Apply MESO bonus to setups
+            for (const setup of setups) {
+                setup.technicalScore = Math.min(100, setup.technicalScore + mesoBonus);
+                if (mesoBonus > 0) setup.confluences.push('MESO regime aligned');
+            }
+            
             const recommendation = generateRecommendation(setups);
             
             analyses.push({
                 symbol: input.symbol,
-                displaySymbol: symbolKey,
+                displaySymbol: input.symbol.replace('=X', '').replace('-USD', '').replace('=F', ''),
                 price: data.price,
                 technical,
                 setups,
@@ -468,10 +555,12 @@ export async function GET() {
             });
         }
         
-        // Sort by recommendation action (EXECUTE first)
+        // 5. Sort by recommendation action (EXECUTE first), then by score
         analyses.sort((a, b) => {
             const order = { EXECUTE: 0, WAIT: 1, AVOID: 2 };
-            return order[a.recommendation.action] - order[b.recommendation.action];
+            const orderDiff = order[a.recommendation.action] - order[b.recommendation.action];
+            if (orderDiff !== 0) return orderDiff;
+            return (b.recommendation.bestSetup?.technicalScore || 0) - (a.recommendation.bestSetup?.technicalScore || 0);
         });
         
         const executeReady = analyses.filter(a => a.recommendation.action === 'EXECUTE').length;
@@ -481,17 +570,19 @@ export async function GET() {
             success: true,
             timestamp: new Date().toISOString(),
             analyses,
+            mesoContext,
             summary: {
                 total: analyses.length,
                 withSetups,
                 executeReady,
+                regime: mesoContext.regimeType,
+                bias: mesoContext.marketBias,
                 message: executeReady > 0 
-                    ? `${executeReady} setup(s) ready for execution`
+                    ? `${executeReady} setup(s) ready for execution (${mesoContext.regimeType} regime)`
                     : withSetups > 0 
                         ? `${withSetups} setup(s) identified, waiting for confirmation`
-                        : 'No actionable setups currently',
+                        : 'Scanning market - no high-conviction setups currently',
             },
-            // Pass through for reference
             mesoInputs: mesoInputs.slice(0, 10),
         });
     } catch (error) {

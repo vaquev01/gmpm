@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import type { RegimeSnapshot } from '@/lib/regimeEngine';
 
-const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3001';
+const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000';
 
 // Fetch regime snapshot from our own API
 async function fetchRegimeSnapshot(): Promise<RegimeSnapshot | null> {

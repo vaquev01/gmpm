@@ -516,8 +516,8 @@ const InstitutionalGatesPanel = ({
     );
 };
 
-// --- MICRO SETUPS PANEL (Pipeline Output) ---
-const MicroSetupsPanel = ({ setups, onSelectAsset }: { 
+// --- MICRO SETUPS PANEL (Pipeline Output) - PROFESSIONAL EXECUTION OUTPUT ---
+const MicroSetupsPanel = ({ setups, fullAnalyses, onSelectAsset }: { 
     setups: {
         symbol: string;
         displaySymbol: string;
@@ -525,94 +525,431 @@ const MicroSetupsPanel = ({ setups, onSelectAsset }: {
         setup: {
             type: string;
             direction: 'LONG' | 'SHORT';
+            timeframe: string;
             entry: number;
             stopLoss: number;
             takeProfit1: number;
+            takeProfit2?: number;
+            takeProfit3?: number;
             riskReward: number;
             confidence: 'HIGH' | 'MEDIUM' | 'LOW';
             confluences: string[];
             thesis: string;
             technicalScore: number;
+            invalidation?: string;
+            mesoAlignment?: boolean;
         } | null;
+    }[];
+    fullAnalyses?: {
+        symbol: string;
+        displaySymbol: string;
+        price: number;
+        technical: {
+            trend: { h4: string; h1: string; m15: string; alignment: string };
+            structure: { lastBOS: string | null; lastCHoCH: string | null; currentPhase: string };
+            levels: { resistance: number[]; support: number[]; pivot: number; atr: number };
+            indicators: { rsi: number; rsiDivergence: string | null; ema21: number; ema50: number; ema200: number; macdSignal: string; bbPosition: string };
+            volume: { relative: number; trend: string; climax: boolean };
+            smc: { orderBlocks: { type: string; low: number; high: number }[]; fvgs: { type: string }[]; liquidityPools: { type: string; level: number }[]; premiumDiscount: string };
+        };
     }[];
     onSelectAsset: (symbol: string) => void;
 }) => {
+    const [expandedSetup, setExpandedSetup] = React.useState<string | null>(null);
     const executeReady = setups.filter(s => s.action === 'EXECUTE' && s.setup);
     const waiting = setups.filter(s => s.action === 'WAIT' && s.setup);
 
     if (executeReady.length === 0 && waiting.length === 0) return null;
 
+    const formatPrice = (price: number) => price < 10 ? price.toFixed(4) : price.toFixed(2);
+
     return (
-        <Card className="bg-gradient-to-r from-orange-950/30 to-gray-900 border-orange-500/30 mb-4">
+        <Card className="bg-gradient-to-br from-orange-950/40 via-gray-900 to-purple-950/30 border-orange-500/40 mb-4">
             <CardContent className="p-4">
-                <div className="flex items-center justify-between mb-3">
-                    <div className="flex items-center gap-2 text-orange-400">
-                        <Zap className="w-4 h-4" />
-                        <span className="text-xs font-bold uppercase tracking-wider">MICRO PIPELINE OUTPUT</span>
+                {/* Header */}
+                <div className="flex items-center justify-between mb-4">
+                    <div className="flex items-center gap-2">
+                        <div className="w-8 h-8 rounded-lg bg-orange-500/20 flex items-center justify-center">
+                            <Zap className="w-5 h-5 text-orange-400" />
+                        </div>
+                        <div>
+                            <span className="text-sm font-bold uppercase tracking-wider text-orange-400">MICRO EXECUTION OUTPUT</span>
+                            <div className="text-[10px] text-gray-500">Technical Analysis → Execution Plan</div>
+                        </div>
                     </div>
-                    <div className="flex items-center gap-2 text-[10px]">
-                        <span className="text-green-400 font-bold">{executeReady.length} EXECUTE</span>
-                        <span className="text-yellow-400">{waiting.length} WAIT</span>
+                    <div className="flex items-center gap-3">
+                        <div className="text-center">
+                            <div className="text-lg font-bold text-green-400">{executeReady.length}</div>
+                            <div className="text-[9px] text-gray-500 uppercase">Execute</div>
+                        </div>
+                        <div className="text-center">
+                            <div className="text-lg font-bold text-yellow-400">{waiting.length}</div>
+                            <div className="text-[9px] text-gray-500 uppercase">Wait</div>
+                        </div>
                     </div>
                 </div>
 
+                {/* Execute Ready - Full Cards */}
                 {executeReady.length > 0 && (
-                    <div className="space-y-2">
-                        <div className="text-[10px] text-green-500 uppercase flex items-center gap-1">
-                            <CheckCircle2 className="w-3 h-3" /> Ready to Execute (Full Pipeline ✓)
+                    <div className="space-y-3">
+                        <div className="text-[10px] text-green-500 uppercase flex items-center gap-1 font-bold">
+                            <CheckCircle2 className="w-3 h-3" /> READY TO EXECUTE — Full Pipeline Validated
                         </div>
-                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
-                            {executeReady.slice(0, 6).map((s) => (
+                        
+                        {executeReady.map((s) => {
+                            const analysis = fullAnalyses?.find(a => a.symbol === s.symbol || a.displaySymbol === s.displaySymbol);
+                            const isExpanded = expandedSetup === s.symbol;
+                            
+                            return (
+                                <div 
+                                    key={s.symbol}
+                                    className={cn(
+                                        "bg-gradient-to-r from-green-950/40 to-gray-900/80 border rounded-lg overflow-hidden transition-all",
+                                        isExpanded ? "border-green-500/60" : "border-green-500/30"
+                                    )}
+                                >
+                                    {/* Main Row - Always visible */}
+                                    <div 
+                                        className="p-3 cursor-pointer hover:bg-green-950/30 transition-colors"
+                                        onClick={() => setExpandedSetup(isExpanded ? null : s.symbol)}
+                                    >
+                                        <div className="flex items-center justify-between">
+                                            <div className="flex items-center gap-3">
+                                                <div className={cn(
+                                                    "w-10 h-10 rounded-lg flex items-center justify-center",
+                                                    s.setup?.direction === 'LONG' ? "bg-green-500/20" : "bg-red-500/20"
+                                                )}>
+                                                    {s.setup?.direction === 'LONG' ? (
+                                                        <ArrowUp className="w-6 h-6 text-green-400" />
+                                                    ) : (
+                                                        <ArrowDown className="w-6 h-6 text-red-400" />
+                                                    )}
+                                                </div>
+                                                <div>
+                                                    <div className="flex items-center gap-2">
+                                                        <span className="font-bold text-lg text-white">{s.displaySymbol}</span>
+                                                        <span className={cn(
+                                                            "text-xs font-bold px-2 py-0.5 rounded",
+                                                            s.setup?.direction === 'LONG' ? "bg-green-500/20 text-green-400" : "bg-red-500/20 text-red-400"
+                                                        )}>
+                                                            {s.setup?.direction}
+                                                        </span>
+                                                        <span className="text-xs font-mono text-cyan-400 bg-cyan-500/10 px-1.5 py-0.5 rounded">
+                                                            {s.setup?.timeframe || 'H1'}
+                                                        </span>
+                                                    </div>
+                                                    <div className="text-[11px] text-gray-400 mt-0.5">
+                                                        {s.setup?.type} Setup • Score {s.setup?.technicalScore}/100 • {s.setup?.confluences.length} confluences
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            
+                                            <div className="flex items-center gap-4">
+                                                {/* R:R Badge */}
+                                                <div className="text-center">
+                                                    <div className={cn(
+                                                        "text-xl font-bold",
+                                                        (s.setup?.riskReward || 0) >= 2.5 ? "text-green-400" :
+                                                        (s.setup?.riskReward || 0) >= 2.0 ? "text-purple-400" : "text-amber-400"
+                                                    )}>
+                                                        {s.setup?.riskReward.toFixed(1)}
+                                                    </div>
+                                                    <div className="text-[9px] text-gray-500 uppercase">R:R</div>
+                                                </div>
+                                                
+                                                {/* Confidence */}
+                                                <div className={cn(
+                                                    "px-3 py-1 rounded-lg text-xs font-bold",
+                                                    s.setup?.confidence === 'HIGH' ? 'bg-green-500/20 text-green-400 border border-green-500/30' :
+                                                    s.setup?.confidence === 'MEDIUM' ? 'bg-yellow-500/20 text-yellow-400 border border-yellow-500/30' :
+                                                    'bg-gray-500/20 text-gray-400 border border-gray-500/30'
+                                                )}>
+                                                    {s.setup?.confidence}
+                                                </div>
+                                                
+                                                {/* Expand Icon */}
+                                                <div className={cn("transition-transform", isExpanded && "rotate-180")}>
+                                                    <ArrowDown className="w-4 h-4 text-gray-500" />
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    
+                                    {/* Expanded Content */}
+                                    {isExpanded && (
+                                        <div className="border-t border-green-500/20 bg-gray-950/50 p-4">
+                                            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                                                
+                                                {/* Column 1: Technical Analysis */}
+                                                <div className="space-y-3">
+                                                    <div className="text-[10px] text-purple-400 uppercase font-bold flex items-center gap-1">
+                                                        <Brain className="w-3 h-3" /> Technical Analysis
+                                                    </div>
+                                                    
+                                                    {/* MTF Trend */}
+                                                    <div className="bg-gray-900/60 rounded p-2">
+                                                        <div className="text-[9px] text-gray-500 uppercase mb-1">Multi-Timeframe Trend</div>
+                                                        <div className="grid grid-cols-3 gap-1 text-[10px]">
+                                                            {['H4', 'H1', 'M15'].map((tf) => {
+                                                                const trend = analysis?.technical?.trend?.[tf.toLowerCase() as 'h4' | 'h1' | 'm15'] || 'NEUTRAL';
+                                                                return (
+                                                                    <div key={tf} className={cn(
+                                                                        "text-center py-1 rounded",
+                                                                        trend === 'BULLISH' ? 'bg-green-500/20 text-green-400' :
+                                                                        trend === 'BEARISH' ? 'bg-red-500/20 text-red-400' : 'bg-gray-500/20 text-gray-400'
+                                                                    )}>
+                                                                        <div className="font-bold">{tf}</div>
+                                                                        <div className="text-[9px]">{trend.slice(0, 4)}</div>
+                                                                    </div>
+                                                                );
+                                                            })}
+                                                        </div>
+                                                        <div className={cn(
+                                                            "text-center text-[9px] mt-1 font-bold",
+                                                            analysis?.technical?.trend?.alignment === 'ALIGNED' ? 'text-green-400' :
+                                                            analysis?.technical?.trend?.alignment === 'PARTIAL' ? 'text-yellow-400' : 'text-red-400'
+                                                        )}>
+                                                            {analysis?.technical?.trend?.alignment || 'PARTIAL'}
+                                                        </div>
+                                                    </div>
+                                                    
+                                                    {/* Indicators */}
+                                                    <div className="bg-gray-900/60 rounded p-2">
+                                                        <div className="text-[9px] text-gray-500 uppercase mb-1">Indicators</div>
+                                                        <div className="space-y-1 text-[10px]">
+                                                            <div className="flex justify-between">
+                                                                <span className="text-gray-500">RSI</span>
+                                                                <span className={cn(
+                                                                    "font-mono",
+                                                                    (analysis?.technical?.indicators?.rsi || 50) > 70 ? 'text-red-400' :
+                                                                    (analysis?.technical?.indicators?.rsi || 50) < 30 ? 'text-green-400' : 'text-gray-300'
+                                                                )}>
+                                                                    {analysis?.technical?.indicators?.rsi?.toFixed(1) || 'N/A'}
+                                                                </span>
+                                                            </div>
+                                                            <div className="flex justify-between">
+                                                                <span className="text-gray-500">MACD</span>
+                                                                <span className={cn(
+                                                                    "font-mono",
+                                                                    analysis?.technical?.indicators?.macdSignal === 'BUY' ? 'text-green-400' :
+                                                                    analysis?.technical?.indicators?.macdSignal === 'SELL' ? 'text-red-400' : 'text-gray-400'
+                                                                )}>
+                                                                    {analysis?.technical?.indicators?.macdSignal || 'NEUTRAL'}
+                                                                </span>
+                                                            </div>
+                                                            <div className="flex justify-between">
+                                                                <span className="text-gray-500">BB Zone</span>
+                                                                <span className="font-mono text-gray-300">{analysis?.technical?.indicators?.bbPosition || 'MIDDLE'}</span>
+                                                            </div>
+                                                            <div className="flex justify-between">
+                                                                <span className="text-gray-500">Volume</span>
+                                                                <span className={cn(
+                                                                    "font-mono",
+                                                                    analysis?.technical?.volume?.trend === 'INCREASING' ? 'text-green-400' : 'text-gray-400'
+                                                                )}>
+                                                                    {analysis?.technical?.volume?.trend || 'STABLE'}
+                                                                </span>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                    
+                                                    {/* SMC */}
+                                                    <div className="bg-gray-900/60 rounded p-2">
+                                                        <div className="text-[9px] text-gray-500 uppercase mb-1">Smart Money Concepts</div>
+                                                        <div className="space-y-1 text-[10px]">
+                                                            <div className="flex justify-between">
+                                                                <span className="text-gray-500">Zone</span>
+                                                                <span className={cn(
+                                                                    "font-mono font-bold",
+                                                                    analysis?.technical?.smc?.premiumDiscount === 'DISCOUNT' ? 'text-green-400' :
+                                                                    analysis?.technical?.smc?.premiumDiscount === 'PREMIUM' ? 'text-red-400' : 'text-gray-400'
+                                                                )}>
+                                                                    {analysis?.technical?.smc?.premiumDiscount || 'EQUILIBRIUM'}
+                                                                </span>
+                                                            </div>
+                                                            <div className="flex justify-between">
+                                                                <span className="text-gray-500">Order Blocks</span>
+                                                                <span className="font-mono text-gray-300">{analysis?.technical?.smc?.orderBlocks?.length || 0} active</span>
+                                                            </div>
+                                                            <div className="flex justify-between">
+                                                                <span className="text-gray-500">FVGs</span>
+                                                                <span className="font-mono text-gray-300">{analysis?.technical?.smc?.fvgs?.length || 0} unfilled</span>
+                                                            </div>
+                                                            <div className="flex justify-between">
+                                                                <span className="text-gray-500">Liquidity</span>
+                                                                <span className="font-mono text-gray-300">{analysis?.technical?.smc?.liquidityPools?.length || 0} pools</span>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                                
+                                                {/* Column 2: Execution Plan */}
+                                                <div className="space-y-3">
+                                                    <div className="text-[10px] text-blue-400 uppercase font-bold flex items-center gap-1">
+                                                        <Target className="w-3 h-3" /> Execution Plan
+                                                    </div>
+                                                    
+                                                    {/* Entry */}
+                                                    <div className="bg-blue-500/10 border border-blue-500/30 rounded p-3">
+                                                        <div className="flex justify-between items-center">
+                                                            <span className="text-blue-400 font-bold text-xs">ENTRY</span>
+                                                            <span className="font-mono text-white text-lg font-bold">{formatPrice(s.setup?.entry || 0)}</span>
+                                                        </div>
+                                                        <div className="text-[9px] text-gray-500 mt-1">Current: {formatPrice(analysis?.price || s.setup?.entry || 0)}</div>
+                                                    </div>
+                                                    
+                                                    {/* Stop Loss */}
+                                                    <div className="bg-red-500/10 border border-red-500/30 rounded p-3">
+                                                        <div className="flex justify-between items-center">
+                                                            <span className="text-red-400 font-bold text-xs">STOP LOSS</span>
+                                                            <span className="font-mono text-white text-lg font-bold">{formatPrice(s.setup?.stopLoss || 0)}</span>
+                                                        </div>
+                                                        <div className="text-[9px] text-gray-500 mt-1">
+                                                            Risk: {((Math.abs((s.setup?.entry || 0) - (s.setup?.stopLoss || 0)) / (s.setup?.entry || 1)) * 100).toFixed(2)}%
+                                                        </div>
+                                                    </div>
+                                                    
+                                                    {/* Take Profits */}
+                                                    <div className="bg-green-500/10 border border-green-500/30 rounded p-3 space-y-2">
+                                                        <div className="flex justify-between items-center">
+                                                            <span className="text-green-400 font-bold text-xs">TP1 (50%)</span>
+                                                            <span className="font-mono text-white font-bold">{formatPrice(s.setup?.takeProfit1 || 0)}</span>
+                                                        </div>
+                                                        {s.setup?.takeProfit2 && (
+                                                            <div className="flex justify-between items-center">
+                                                                <span className="text-green-400/70 text-xs">TP2 (30%)</span>
+                                                                <span className="font-mono text-gray-300">{formatPrice(s.setup.takeProfit2)}</span>
+                                                            </div>
+                                                        )}
+                                                        {s.setup?.takeProfit3 && (
+                                                            <div className="flex justify-between items-center">
+                                                                <span className="text-green-400/50 text-xs">TP3 (20%)</span>
+                                                                <span className="font-mono text-gray-400">{formatPrice(s.setup.takeProfit3)}</span>
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                    
+                                                    {/* Invalidation */}
+                                                    {s.setup?.invalidation && (
+                                                        <div className="bg-orange-500/10 border border-orange-500/30 rounded p-2">
+                                                            <div className="text-[9px] text-orange-400 uppercase font-bold">Invalidation</div>
+                                                            <div className="text-[10px] text-gray-300 mt-1">{s.setup.invalidation}</div>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                                
+                                                {/* Column 3: Thesis & Confluences */}
+                                                <div className="space-y-3">
+                                                    <div className="text-[10px] text-amber-400 uppercase font-bold flex items-center gap-1">
+                                                        <Brain className="w-3 h-3" /> Trade Thesis
+                                                    </div>
+                                                    
+                                                    {/* Thesis */}
+                                                    <div className="bg-amber-500/10 border border-amber-500/30 rounded p-3">
+                                                        <p className="text-[11px] text-gray-300 leading-relaxed">{s.setup?.thesis}</p>
+                                                    </div>
+                                                    
+                                                    {/* Confluences */}
+                                                    <div className="bg-gray-900/60 rounded p-2">
+                                                        <div className="text-[9px] text-gray-500 uppercase mb-2">Confluences ({s.setup?.confluences.length})</div>
+                                                        <div className="flex flex-wrap gap-1">
+                                                            {s.setup?.confluences.map((c, i) => (
+                                                                <span key={i} className="text-[9px] bg-purple-500/20 text-purple-300 px-1.5 py-0.5 rounded">
+                                                                    {c}
+                                                                </span>
+                                                            ))}
+                                                        </div>
+                                                    </div>
+                                                    
+                                                    {/* Key Levels */}
+                                                    <div className="bg-gray-900/60 rounded p-2">
+                                                        <div className="text-[9px] text-gray-500 uppercase mb-1">Key Levels</div>
+                                                        <div className="space-y-1 text-[10px]">
+                                                            <div className="flex justify-between">
+                                                                <span className="text-gray-500">R1</span>
+                                                                <span className="font-mono text-red-400">{formatPrice(analysis?.technical?.levels?.resistance?.[0] || 0)}</span>
+                                                            </div>
+                                                            <div className="flex justify-between">
+                                                                <span className="text-gray-500">Pivot</span>
+                                                                <span className="font-mono text-gray-300">{formatPrice(analysis?.technical?.levels?.pivot || 0)}</span>
+                                                            </div>
+                                                            <div className="flex justify-between">
+                                                                <span className="text-gray-500">S1</span>
+                                                                <span className="font-mono text-green-400">{formatPrice(analysis?.technical?.levels?.support?.[0] || 0)}</span>
+                                                            </div>
+                                                            <div className="flex justify-between">
+                                                                <span className="text-gray-500">ATR</span>
+                                                                <span className="font-mono text-gray-300">{formatPrice(analysis?.technical?.levels?.atr || 0)}</span>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                    
+                                                    {/* MESO Alignment */}
+                                                    <div className={cn(
+                                                        "rounded p-2 text-center",
+                                                        s.setup?.mesoAlignment ? "bg-green-500/10 border border-green-500/30" : "bg-yellow-500/10 border border-yellow-500/30"
+                                                    )}>
+                                                        <div className="text-[10px] font-bold">
+                                                            {s.setup?.mesoAlignment ? (
+                                                                <span className="text-green-400">✓ MESO ALIGNED</span>
+                                                            ) : (
+                                                                <span className="text-yellow-400">⚠ MESO NEUTRAL</span>
+                                                            )}
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            
+                                            {/* Action Button */}
+                                            <div className="mt-4 pt-3 border-t border-gray-800 flex justify-between items-center">
+                                                <div className="text-[10px] text-gray-500">
+                                                    Structure: {analysis?.technical?.structure?.currentPhase || 'N/A'} | 
+                                                    Last BOS: {analysis?.technical?.structure?.lastBOS || 'None'}
+                                                </div>
+                                                <Button 
+                                                    size="sm" 
+                                                    onClick={(e) => { e.stopPropagation(); onSelectAsset(s.displaySymbol); }}
+                                                    className="bg-green-600 hover:bg-green-500 text-white font-bold"
+                                                >
+                                                    <Zap className="w-4 h-4 mr-1" /> View Full Analysis
+                                                </Button>
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                            );
+                        })}
+                    </div>
+                )}
+
+                {/* Waiting Setups - Compact */}
+                {waiting.length > 0 && (
+                    <div className={cn("space-y-2", executeReady.length > 0 && "mt-4 pt-4 border-t border-gray-800")}>
+                        <div className="text-[10px] text-yellow-500 uppercase flex items-center gap-1 font-bold">
+                            <AlertTriangle className="w-3 h-3" /> WAITING FOR CONFIRMATION
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-2">
+                            {waiting.map((s) => (
                                 <div 
                                     key={s.symbol}
                                     onClick={() => onSelectAsset(s.displaySymbol)}
-                                    className="bg-green-950/30 border border-green-500/30 rounded p-2 cursor-pointer hover:bg-green-950/50 transition-colors"
+                                    className="bg-yellow-950/20 border border-yellow-500/30 rounded p-2 cursor-pointer hover:bg-yellow-950/30 transition-colors"
                                 >
                                     <div className="flex items-center justify-between">
                                         <div className="flex items-center gap-2">
                                             {s.setup?.direction === 'LONG' ? (
-                                                <ArrowUp className="w-4 h-4 text-green-400" />
+                                                <ArrowUp className="w-3 h-3 text-green-400" />
                                             ) : (
-                                                <ArrowDown className="w-4 h-4 text-red-400" />
+                                                <ArrowDown className="w-3 h-3 text-red-400" />
                                             )}
-                                            <span className="font-bold text-gray-200">{s.displaySymbol}</span>
+                                            <span className="font-bold text-sm text-gray-200">{s.displaySymbol}</span>
                                         </div>
-                                        <span className={cn("text-[10px] font-bold px-1.5 py-0.5 rounded",
-                                            s.setup?.confidence === 'HIGH' ? 'bg-green-500/20 text-green-400' :
-                                            s.setup?.confidence === 'MEDIUM' ? 'bg-yellow-500/20 text-yellow-400' :
-                                            'bg-gray-500/20 text-gray-400'
-                                        )}>
-                                            {s.setup?.confidence}
-                                        </span>
+                                        <span className="text-[9px] text-yellow-400 font-mono">{s.setup?.type}</span>
                                     </div>
-                                    <div className="mt-1 text-[10px] text-gray-400">
-                                        {s.setup?.type} | R:R {s.setup?.riskReward.toFixed(1)} | Score {s.setup?.technicalScore}
-                                    </div>
-                                    <div className="mt-1 text-[10px] text-gray-500 truncate">
-                                        {s.setup?.confluences.slice(0, 2).join(' • ')}
+                                    <div className="mt-1 text-[9px] text-gray-500">
+                                        R:R {s.setup?.riskReward.toFixed(1)} • Score {s.setup?.technicalScore} • {s.setup?.confluences.length} conf
                                     </div>
                                 </div>
-                            ))}
-                        </div>
-                    </div>
-                )}
-
-                {waiting.length > 0 && executeReady.length > 0 && <div className="border-t border-gray-800 my-3" />}
-
-                {waiting.length > 0 && (
-                    <div className="space-y-2">
-                        <div className="text-[10px] text-yellow-500 uppercase flex items-center gap-1">
-                            <AlertTriangle className="w-3 h-3" /> Waiting for Confirmation
-                        </div>
-                        <div className="flex flex-wrap gap-2">
-                            {waiting.slice(0, 8).map((s) => (
-                                <span 
-                                    key={s.symbol}
-                                    onClick={() => onSelectAsset(s.displaySymbol)}
-                                    className="text-[10px] bg-yellow-500/10 border border-yellow-500/30 text-yellow-400 px-2 py-1 rounded cursor-pointer hover:bg-yellow-500/20"
-                                >
-                                    {s.displaySymbol} ({s.setup?.type})
-                                </span>
                             ))}
                         </div>
                     </div>
@@ -1474,15 +1811,35 @@ export const CommandView = () => {
         setup: {
             type: string;
             direction: 'LONG' | 'SHORT';
+            timeframe: string;
             entry: number;
             stopLoss: number;
             takeProfit1: number;
+            takeProfit2?: number;
+            takeProfit3?: number;
             riskReward: number;
             confidence: 'HIGH' | 'MEDIUM' | 'LOW';
             confluences: string[];
             thesis: string;
             technicalScore: number;
+            invalidation?: string;
+            mesoAlignment?: boolean;
         } | null;
+    }[]>([]);
+
+    // MICRO FULL ANALYSES (Technical data for expanded view)
+    const [microAnalyses, setMicroAnalyses] = useState<{
+        symbol: string;
+        displaySymbol: string;
+        price: number;
+        technical: {
+            trend: { h4: string; h1: string; m15: string; alignment: string };
+            structure: { lastBOS: string | null; lastCHoCH: string | null; currentPhase: string };
+            levels: { resistance: number[]; support: number[]; pivot: number; atr: number };
+            indicators: { rsi: number; rsiDivergence: string | null; ema21: number; ema50: number; ema200: number; macdSignal: string; bbPosition: string };
+            volume: { relative: number; trend: string; climax: boolean };
+            smc: { orderBlocks: { type: string; low: number; high: number }[]; fvgs: { type: string }[]; liquidityPools: { type: string; level: number }[]; premiumDiscount: string };
+        };
     }[]>([]);
 
     // TOGGLE SELECTION
@@ -1806,15 +2163,26 @@ export const CommandView = () => {
                     });
                 }
                 
-                // Process MICRO setups
+                // Process MICRO setups and full analyses
                 if (alive && microDataRes.success && Array.isArray(microDataRes.analyses)) {
-                    const setups = microDataRes.analyses.map((a: { symbol: string; displaySymbol: string; recommendation: { action: string; bestSetup: unknown }; setups: unknown[] }) => ({
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    const setups = microDataRes.analyses.map((a: any) => ({
                         symbol: a.symbol,
                         displaySymbol: a.displaySymbol,
                         action: a.recommendation.action as 'EXECUTE' | 'WAIT' | 'AVOID',
                         setup: a.recommendation.bestSetup || (a.setups.length > 0 ? a.setups[0] : null),
                     }));
                     setMicroSetups(setups);
+                    
+                    // Store full analyses for expanded view
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    const analyses = microDataRes.analyses.map((a: any) => ({
+                        symbol: a.symbol,
+                        displaySymbol: a.displaySymbol,
+                        price: a.price,
+                        technical: a.technical,
+                    }));
+                    setMicroAnalyses(analyses);
                 }
             } catch (e) {
                 console.error('Pipeline fetch error', e);
@@ -1910,7 +2278,7 @@ export const CommandView = () => {
             <Focus24hPanel mesoData={mesoData} />
 
             {/* 0.6. MICRO PIPELINE OUTPUT (Setups prontos) */}
-            <MicroSetupsPanel setups={microSetups} onSelectAsset={setSelectedScannerAsset} />
+            <MicroSetupsPanel setups={microSetups} fullAnalyses={microAnalyses} onSelectAsset={setSelectedScannerAsset} />
 
             {/* 1. EXECUTION STATUS (Micro-Capital) */}
             <ExecutionStatusPanel />

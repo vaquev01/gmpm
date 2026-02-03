@@ -245,7 +245,7 @@ export default function VerifyPage() {
       <Card className="bg-gray-900/30 border-gray-800">
         <CardContent className="p-4 text-xs text-gray-400 space-y-1">
           <div className="font-bold text-gray-300">Como usar</div>
-          <div className="font-mono">1) Abre: http://localhost:3001/verify</div>
+          <div className="font-mono">1) Abre: http://localhost:3000/verify</div>
           <div className="font-mono">2) Confere se está ALL OK</div>
           <div className="font-mono">3) Se falhar FRED, verifica FRED_API_KEY em gmpm-app/.env.local e reinicia npm run dev</div>
         </CardContent>

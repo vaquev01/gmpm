@@ -9,7 +9,7 @@ const CACHE_TTL_MS = 15_000; // 15 seconds for real-time
 
 // Fetch macro data from our own market API
 async function fetchMacroInputs(): Promise<MacroInputs> {
-    const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3001';
+    const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000';
     
     try {
         const res = await fetch(`${baseUrl}/api/market?limit=50`, {

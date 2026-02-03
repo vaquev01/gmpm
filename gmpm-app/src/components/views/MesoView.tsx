@@ -98,7 +98,7 @@ interface MesoData {
         treasury2y?: number;
         yieldCurve?: number;
         dollarIndex?: number;
-        fearGreed?: number;
+        fearGreed?: { value: number; classification: string; timestamp: string } | number | null;
     };
 }
 
@@ -476,11 +476,17 @@ const ExecutiveSummaryPanel = ({ data }: { data: MesoData }) => {
                     </div>
                     <div className="text-center p-3 bg-gray-800/30 rounded">
                         <div className="text-[10px] text-gray-500 uppercase">Fear & Greed</div>
-                        <div className={cn("text-xl font-bold font-mono",
-                            (data.macro?.fearGreed || 50) > 60 ? "text-green-400" : (data.macro?.fearGreed || 50) < 40 ? "text-red-400" : "text-yellow-400"
-                        )}>
-                            {data.macro?.fearGreed || '—'}
-                        </div>
+                        {(() => {
+                            const fg = data.macro?.fearGreed;
+                            const fgValue = typeof fg === 'object' && fg !== null ? fg.value : (typeof fg === 'number' ? fg : 50);
+                            return (
+                                <div className={cn("text-xl font-bold font-mono",
+                                    fgValue > 60 ? "text-green-400" : fgValue < 40 ? "text-red-400" : "text-yellow-400"
+                                )}>
+                                    {fgValue || '—'}
+                                </div>
+                            );
+                        })()}
                     </div>
                 </div>
 
