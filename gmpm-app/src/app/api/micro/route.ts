@@ -80,6 +80,15 @@ interface MicroAnalysis {
         reason: string;
         bestSetup: Setup | null;
     };
+    scenarioAnalysis?: {
+        status: 'PRONTO' | 'DESENVOLVENDO' | 'CONTRA';
+        statusReason: string;
+        technicalAlignment: number;
+        entryQuality: 'OTIMO' | 'BOM' | 'RUIM';
+        timing: 'AGORA' | 'AGUARDAR' | 'PERDIDO';
+        blockers: string[];
+        catalysts: string[];
+    };
 }
 
 // Fetch meso inputs with full context
@@ -287,57 +296,156 @@ function generateTechnicalAnalysis(
     };
 }
 
-// Generate setups from technical analysis
+// Analyze scenario progress - MICRO refines MESO scenarios
+interface ScenarioAnalysis {
+    status: 'PRONTO' | 'DESENVOLVENDO' | 'CONTRA';
+    statusReason: string;
+    technicalAlignment: number; // 0-100
+    entryQuality: 'OTIMO' | 'BOM' | 'RUIM';
+    timing: 'AGORA' | 'AGUARDAR' | 'PERDIDO';
+    blockers: string[];
+    catalysts: string[];
+}
+
+function analyzeScenarioProgress(
+    technical: TechnicalAnalysis,
+    mesoDirection: 'LONG' | 'SHORT'
+): ScenarioAnalysis {
+    const { trend, indicators, smc, volume } = technical;
+    const blockers: string[] = [];
+    const catalysts: string[] = [];
+    let alignmentScore = 50;
+    
+    // 1. Trend alignment with MESO direction
+    const trendAligned = (mesoDirection === 'LONG' && (trend.h4 === 'BULLISH' || trend.h1 === 'BULLISH')) ||
+        (mesoDirection === 'SHORT' && (trend.h4 === 'BEARISH' || trend.h1 === 'BEARISH'));
+    const trendContra = (mesoDirection === 'LONG' && trend.h4 === 'BEARISH') ||
+        (mesoDirection === 'SHORT' && trend.h4 === 'BULLISH');
+    
+    if (trendAligned) {
+        alignmentScore += 20;
+        catalysts.push('Tendência alinhada com MESO');
+    } else if (trendContra) {
+        alignmentScore -= 30;
+        blockers.push('Tendência H4 contrária à direção MESO');
+    }
+    
+    // 2. Price zone quality
+    const inDiscountForLong = smc.premiumDiscount === 'DISCOUNT' && mesoDirection === 'LONG';
+    const inPremiumForShort = smc.premiumDiscount === 'PREMIUM' && mesoDirection === 'SHORT';
+    const inGoodZone = inDiscountForLong || inPremiumForShort;
+    const inBadZone = (smc.premiumDiscount === 'PREMIUM' && mesoDirection === 'LONG') ||
+        (smc.premiumDiscount === 'DISCOUNT' && mesoDirection === 'SHORT');
+    
+    if (inGoodZone) {
+        alignmentScore += 15;
+        catalysts.push(`Preço em zona ${smc.premiumDiscount.toLowerCase()} favorável`);
+    } else if (inBadZone) {
+        alignmentScore -= 15;
+        blockers.push(`Preço em zona ${smc.premiumDiscount.toLowerCase()} desfavorável`);
+    }
+    
+    // 3. Momentum/RSI alignment
+    const rsiSupportsLong = indicators.rsi > 40 && indicators.rsi < 70 && mesoDirection === 'LONG';
+    const rsiSupportsShort = indicators.rsi > 30 && indicators.rsi < 60 && mesoDirection === 'SHORT';
+    const rsiOverboughtForLong = indicators.rsi > 70 && mesoDirection === 'LONG';
+    const rsiOversoldForShort = indicators.rsi < 30 && mesoDirection === 'SHORT';
+    
+    if (rsiSupportsLong || rsiSupportsShort) {
+        alignmentScore += 10;
+        catalysts.push(`RSI ${indicators.rsi.toFixed(0)} suporta ${mesoDirection}`);
+    }
+    if (rsiOverboughtForLong) {
+        blockers.push('RSI sobrecomprado - aguardar pullback');
+        alignmentScore -= 10;
+    }
+    if (rsiOversoldForShort) {
+        blockers.push('RSI sobrevendido - aguardar bounce');
+        alignmentScore -= 10;
+    }
+    
+    // 4. Volume confirmation
+    if (volume.trend === 'INCREASING') {
+        alignmentScore += 10;
+        catalysts.push('Volume expandindo');
+    } else if (volume.trend === 'DECREASING') {
+        blockers.push('Volume contraindo - aguardar confirmação');
+    }
+    
+    // 5. SMC structures
+    if (smc.orderBlocks.length > 0) {
+        const nearOB = smc.orderBlocks[0];
+        if ((nearOB.type === 'BULLISH' && mesoDirection === 'LONG') ||
+            (nearOB.type === 'BEARISH' && mesoDirection === 'SHORT')) {
+            alignmentScore += 10;
+            catalysts.push(`Próximo de ${nearOB.type} Order Block`);
+        }
+    }
+    if (smc.liquidityPools.length > 0) {
+        catalysts.push('Liquidez disponível para captura');
+    }
+    
+    // Determine status based on alignment
+    let status: ScenarioAnalysis['status'];
+    let statusReason: string;
+    let entryQuality: ScenarioAnalysis['entryQuality'];
+    let timing: ScenarioAnalysis['timing'];
+    
+    if (alignmentScore >= 75 && blockers.length === 0) {
+        status = 'PRONTO';
+        statusReason = `Cenário MESO confirmado tecnicamente. ${catalysts.slice(0, 2).join(', ')}.`;
+        entryQuality = 'OTIMO';
+        timing = 'AGORA';
+    } else if (alignmentScore >= 60 && blockers.length <= 1) {
+        status = 'PRONTO';
+        statusReason = `Setup válido com ressalvas. ${blockers[0] || 'Monitorar volume.'}`;
+        entryQuality = 'BOM';
+        timing = 'AGORA';
+    } else if (alignmentScore >= 45 || (trendAligned && blockers.length <= 2)) {
+        status = 'DESENVOLVENDO';
+        statusReason = `Cenário em formação. Aguardar: ${blockers.slice(0, 2).join('; ') || 'confirmação técnica'}.`;
+        entryQuality = 'RUIM';
+        timing = 'AGUARDAR';
+    } else {
+        status = 'CONTRA';
+        statusReason = `Técnico não suporta direção MESO. ${blockers.slice(0, 2).join('; ')}.`;
+        entryQuality = 'RUIM';
+        timing = 'PERDIDO';
+    }
+    
+    return {
+        status,
+        statusReason,
+        technicalAlignment: Math.max(0, Math.min(100, alignmentScore)),
+        entryQuality,
+        timing,
+        blockers,
+        catalysts,
+    };
+}
+
+// Generate setups from technical analysis (only if scenario is PRONTO)
 function generateSetups(
     symbol: string,
     displaySymbol: string,
     price: number,
     technical: TechnicalAnalysis,
-    mesoDirection: 'LONG' | 'SHORT'
-): Setup[] {
-    const setups: Setup[] = [];
-    const { trend, levels, indicators, smc, volume } = technical;
+    mesoDirection: 'LONG' | 'SHORT',
+    mesoReason: string
+): { setup: Setup | null; scenarioAnalysis: ScenarioAnalysis } {
+    const { trend, levels, indicators, smc } = technical;
     const atr = levels.atr;
     
-    // Check alignment with meso
-    const mesoAligned = (mesoDirection === 'LONG' && trend.h4 === 'BULLISH') ||
-        (mesoDirection === 'SHORT' && trend.h4 === 'BEARISH');
+    // First: analyze if MESO scenario is developing correctly
+    const scenarioAnalysis = analyzeScenarioProgress(technical, mesoDirection);
+    
+    // If scenario is CONTRA, don't generate setup
+    if (scenarioAnalysis.status === 'CONTRA') {
+        return { setup: null, scenarioAnalysis };
+    }
     
     // Generate confluence list
-    const confluences: string[] = [];
-    if (trend.alignment === 'ALIGNED') confluences.push('Multi-TF alignment');
-    if (indicators.rsiDivergence) confluences.push(`RSI ${indicators.rsiDivergence} divergence`);
-    if (indicators.macdSignal !== 'NEUTRAL') confluences.push(`MACD ${indicators.macdSignal}`);
-    if (smc.premiumDiscount === 'DISCOUNT' && mesoDirection === 'LONG') confluences.push('Discount zone');
-    if (smc.premiumDiscount === 'PREMIUM' && mesoDirection === 'SHORT') confluences.push('Premium zone');
-    if (volume.trend === 'INCREASING') confluences.push('Volume expanding');
-    if (smc.orderBlocks.length > 0) confluences.push(`Near ${smc.orderBlocks[0].type} OB`);
-    
-    // Calculate technical score
-    let technicalScore = 50;
-    if (trend.alignment === 'ALIGNED') technicalScore += 15;
-    if (mesoAligned) technicalScore += 10;
-    if (indicators.rsiDivergence) technicalScore += 10;
-    if (volume.trend === 'INCREASING') technicalScore += 5;
-    if (smc.premiumDiscount === 'DISCOUNT' && mesoDirection === 'LONG') technicalScore += 10;
-    if (smc.premiumDiscount === 'PREMIUM' && mesoDirection === 'SHORT') technicalScore += 10;
-    
-    // Add more confluences based on available data
-    if (indicators.rsi > 50 && mesoDirection === 'LONG') confluences.push('RSI bullish bias');
-    if (indicators.rsi < 50 && mesoDirection === 'SHORT') confluences.push('RSI bearish bias');
-    if (indicators.bbPosition === 'LOWER' && mesoDirection === 'LONG') confluences.push('Bollinger lower band');
-    if (indicators.bbPosition === 'UPPER' && mesoDirection === 'SHORT') confluences.push('Bollinger upper band');
-    if (trend.h4 !== 'NEUTRAL') confluences.push(`H4 ${trend.h4.toLowerCase()}`);
-    if (smc.liquidityPools.length > 0) confluences.push('Liquidity pool nearby');
-    
-    // Add score for meso direction alignment
-    if (mesoDirection === 'LONG' && indicators.rsi > 40 && indicators.rsi < 70) technicalScore += 5;
-    if (mesoDirection === 'SHORT' && indicators.rsi > 30 && indicators.rsi < 60) technicalScore += 5;
-    
-    // Relax criteria - generate setups with lower threshold
-    if (technicalScore < 55 || confluences.length < 1) {
-        return [];
-    }
+    const confluences: string[] = [...scenarioAnalysis.catalysts];
     
     // Determine setup type
     let setupType: Setup['type'] = 'CONTINUATION';
@@ -347,7 +455,6 @@ function generateSetups(
     if (smc.fvgs.length > 0 && !smc.fvgs[0].filled) setupType = 'LIQUIDITY_GRAB';
     
     // Calculate entry, SL, TPs based on direction
-    // SL = 1 ATR, TP1 = 2 ATR (R:R = 2:1)
     const isLong = mesoDirection === 'LONG';
     const entry = price;
     const stopLoss = isLong ? entry - atr : entry + atr;
@@ -357,18 +464,17 @@ function generateSetups(
     
     const risk = Math.abs(entry - stopLoss);
     const reward = Math.abs(tp1 - entry);
-    const riskReward = risk > 0 ? reward / risk : 2; // Default to 2 if no risk
+    const riskReward = risk > 0 ? reward / risk : 2;
     
-    const confidence: Setup['confidence'] = technicalScore >= 80 ? 'HIGH' :
-        technicalScore >= 65 ? 'MEDIUM' : 'LOW';
+    const confidence: Setup['confidence'] = scenarioAnalysis.technicalAlignment >= 75 ? 'HIGH' :
+        scenarioAnalysis.technicalAlignment >= 60 ? 'MEDIUM' : 'LOW';
     
-    // Generate thesis
-    const thesis = `${mesoDirection} ${displaySymbol}: ${setupType} setup at ${smc.premiumDiscount.toLowerCase()} zone. ` +
-        `${confluences.slice(0, 3).join(', ')}. ` +
-        `R:R ${riskReward.toFixed(1)}. ` +
-        `${mesoAligned ? 'Aligned with MESO.' : 'MESO neutral.'}`;
+    // Generate thesis incorporating MESO reason and scenario status
+    const thesis = `[${scenarioAnalysis.status}] ${mesoReason} | ` +
+        `${mesoDirection} ${displaySymbol}: ${setupType} @ ${smc.premiumDiscount.toLowerCase()}. ` +
+        `${scenarioAnalysis.statusReason}`;
     
-    setups.push({
+    const setup: Setup = {
         id: `${symbol}-${setupType}-${Date.now()}`,
         symbol,
         displaySymbol,
@@ -385,11 +491,11 @@ function generateSetups(
         confluences,
         invalidation: isLong ? `Close below ${stopLoss.toFixed(4)}` : `Close above ${stopLoss.toFixed(4)}`,
         thesis,
-        mesoAlignment: mesoAligned,
-        technicalScore,
-    });
+        mesoAlignment: scenarioAnalysis.status === 'PRONTO',
+        technicalScore: scenarioAnalysis.technicalAlignment,
+    };
     
-    return setups;
+    return { setup, scenarioAnalysis };
 }
 
 // Generate recommendation
@@ -485,21 +591,39 @@ export async function GET() {
             
             const technical = generateTechnicalAnalysis(input.symbol, data);
             
-            // MESO already filtered, so direction is trusted
-            const setups = generateSetups(input.symbol, input.symbol, data.price, technical, input.direction);
+            // MICRO refines MESO scenario - analyze progress
+            const { setup, scenarioAnalysis } = generateSetups(
+                input.symbol, 
+                input.symbol, 
+                data.price, 
+                technical, 
+                input.direction,
+                input.reason
+            );
             
-            // Add MESO conviction bonus
-            for (const setup of setups) {
-                setup.technicalScore = Math.min(100, setup.technicalScore + 15);
-                setup.confluences.push('MESO direção confirmada');
-                setup.mesoAlignment = true;
-            }
+            // Build setups array (may be empty if scenario is CONTRA)
+            const setups: Setup[] = setup ? [setup] : [];
             
-            const recommendation = generateRecommendation(setups);
-            
-            // Include MESO reason in thesis
-            if (recommendation.bestSetup) {
-                recommendation.bestSetup.thesis = `${input.reason} | ${recommendation.bestSetup.thesis}`;
+            // Generate recommendation based on scenario status
+            let recommendation;
+            if (scenarioAnalysis.status === 'PRONTO' && setup) {
+                recommendation = {
+                    action: 'EXECUTE' as const,
+                    reason: `${scenarioAnalysis.statusReason} Timing: ${scenarioAnalysis.timing}. Qualidade: ${scenarioAnalysis.entryQuality}.`,
+                    bestSetup: setup,
+                };
+            } else if (scenarioAnalysis.status === 'DESENVOLVENDO') {
+                recommendation = {
+                    action: 'WAIT' as const,
+                    reason: scenarioAnalysis.statusReason,
+                    bestSetup: setup,
+                };
+            } else {
+                recommendation = {
+                    action: 'AVOID' as const,
+                    reason: scenarioAnalysis.statusReason,
+                    bestSetup: null,
+                };
             }
             
             analyses.push({
@@ -509,6 +633,8 @@ export async function GET() {
                 technical,
                 setups,
                 recommendation,
+                // Add scenario analysis to output
+                scenarioAnalysis,
             });
         }
         
