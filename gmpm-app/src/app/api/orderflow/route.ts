@@ -2,6 +2,7 @@
 // API de Order Flow usando Binance (gratuito, sem API key)
 
 import { NextResponse } from 'next/server';
+import { serverLog } from '@/lib/serverLogs';
 
 interface TradeData {
     price: number;
@@ -84,26 +85,8 @@ async function fetchRecentTrades(symbol: string, limit: number = 1000): Promise<
     }
 }
 
-async function fetchOrderBook(symbol: string): Promise<{ bids: [string, string][]; asks: [string, string][] } | null> {
-    try {
-        const binanceSymbol = toBinanceSymbol(symbol);
-        const url = `${BINANCE_BASE}/depth?symbol=${binanceSymbol}&limit=100`;
-
-        const response = await fetch(url, {
-            next: { revalidate: 5 },
-        });
-
-        if (!response.ok) return null;
-
-        return await response.json();
-    } catch {
-        return null;
-    }
-}
-
 async function analyzeOrderFlow(symbol: string): Promise<OrderFlowAnalysis | null> {
     const trades = await fetchRecentTrades(symbol);
-    const orderBook = await fetchOrderBook(symbol);
 
     if (trades.length === 0) return null;
 
@@ -256,7 +239,7 @@ export async function GET(request: Request) {
             data: validResults,
         });
     } catch (error) {
-        console.error('Order Flow API Error:', error);
+        serverLog('error', 'orderflow_api_error', { error: String(error) }, 'api/orderflow');
         return NextResponse.json(
             { success: false, error: 'Failed to analyze order flow' },
             { status: 500 }

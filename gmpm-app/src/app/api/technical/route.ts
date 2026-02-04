@@ -2,6 +2,8 @@
 // API para indicadores técnicos REAIS com dados históricos
 
 import { NextResponse } from 'next/server';
+import { yahooFetchJson } from '@/lib/yahooClient';
+import { serverLog } from '@/lib/serverLogs';
 
 interface HistoricalQuote {
     date: string;
@@ -46,6 +48,23 @@ interface TechnicalIndicators {
     trend: 'UPTREND' | 'DOWNTREND' | 'SIDEWAYS';
     trendScore: number; // 0-100
 }
+
+type YahooChartResponse = {
+    chart?: {
+        result?: Array<{
+            timestamp?: number[];
+            indicators?: {
+                quote?: Array<{
+                    open?: Array<number | null>;
+                    high?: Array<number | null>;
+                    low?: Array<number | null>;
+                    close?: Array<number | null>;
+                    volume?: Array<number | null>;
+                }>;
+            };
+        }>;
+    };
+};
 
 // ===== CÁLCULOS DE INDICADORES =====
 
@@ -173,8 +192,6 @@ function calculateADX(highs: number[], lows: number[], closes: number[], period:
     const plusDI = (smoothPlusDM[smoothPlusDM.length - 1] / smoothTR[smoothTR.length - 1]) * 100;
     const minusDI = (smoothMinusDM[smoothMinusDM.length - 1] / smoothTR[smoothTR.length - 1]) * 100;
 
-    const dx = Math.abs(plusDI - minusDI) / (plusDI + minusDI) * 100;
-
     // ADX é a média móvel do DX
     const dxValues: number[] = [];
     for (let i = period; i < smoothPlusDM.length; i++) {
@@ -220,14 +237,13 @@ async function fetchHistoricalData(symbol: string): Promise<HistoricalQuote[]> {
 
         const url = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?period1=${period1}&period2=${period2}&interval=1d`;
 
-        const response = await fetch(url, {
-            headers: { 'User-Agent': 'Mozilla/5.0' },
-            next: { revalidate: 300 }, // Cache 5 min
-        });
+        const y = await yahooFetchJson(url, 300_000);
+        if (!y.ok || !y.data) {
+            serverLog('warn', 'technical_yahoo_fetch_failed', { symbol, status: y.status, cached: y.cached, stale: y.stale }, 'api/technical');
+            return [];
+        }
 
-        if (!response.ok) return [];
-
-        const data = await response.json();
+        const data = y.data as YahooChartResponse;
         const result = data.chart?.result?.[0];
 
         if (!result) return [];
@@ -235,17 +251,29 @@ async function fetchHistoricalData(symbol: string): Promise<HistoricalQuote[]> {
         const timestamps = result.timestamp || [];
         const quotes = result.indicators?.quote?.[0] || {};
 
+        const open = quotes.open || [];
+        const high = quotes.high || [];
+        const low = quotes.low || [];
+        const close = quotes.close || [];
+        const volume = quotes.volume || [];
+
+        const coalesceNum = (v: number | null | undefined, fallback: number) => (v == null ? fallback : v);
+        const coalesceVol = (v: number | null | undefined) => (v == null ? 0 : v);
+
         const historical: HistoricalQuote[] = [];
 
         for (let i = 0; i < timestamps.length; i++) {
-            if (quotes.close?.[i] != null) {
+            const c = close[i];
+            const o = open[i];
+            if (c != null) {
+                const openPx = o != null ? o : c;
                 historical.push({
                     date: new Date(timestamps[i] * 1000).toISOString().split('T')[0],
-                    open: quotes.open?.[i] || 0,
-                    high: quotes.high?.[i] || 0,
-                    low: quotes.low?.[i] || 0,
-                    close: quotes.close?.[i] || 0,
-                    volume: quotes.volume?.[i] || 0,
+                    open: openPx,
+                    high: coalesceNum(high[i], openPx),
+                    low: coalesceNum(low[i], openPx),
+                    close: c,
+                    volume: coalesceVol(volume[i]),
                 });
             }
         }
@@ -359,7 +387,7 @@ export async function GET(request: Request) {
             data: validResults,
         });
     } catch (error) {
-        console.error('Technical API Error:', error);
+        serverLog('error', 'technical_api_error', { error: String(error) }, 'api/technical');
         return NextResponse.json(
             { success: false, error: 'Failed to calculate technicals' },
             { status: 500 }

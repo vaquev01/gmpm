@@ -100,6 +100,12 @@ interface MesoData {
         dollarIndex?: number;
         fearGreed?: { value: number; classification: string; timestamp: string } | number | null;
     };
+    microInputs?: {
+        allowedInstruments: Array<{ symbol: string; direction: 'LONG' | 'SHORT'; class: string; reason: string; score: number }>;
+        prohibitedInstruments: Array<{ symbol: string; reason: string }>;
+        favoredDirection?: 'LONG' | 'SHORT' | 'NEUTRAL';
+        volatilityContext?: 'HIGH' | 'NORMAL' | 'LOW';
+    };
 }
 
 // Icons for asset classes
@@ -124,6 +130,8 @@ const directionColors = {
     SHORT: 'text-red-400',
     AVOID: 'text-gray-500',
 };
+
+const directionLabel = (d: ClassAnalysis['direction']) => d === 'AVOID' ? 'NO-TRADE' : d;
 
 const confidenceColors = {
     HIGH: 'text-green-400',
@@ -155,7 +163,7 @@ const AssetClassCard = ({ data }: { data: ClassAnalysis }) => {
 
     return (
         <Card className={cn(
-            "bg-gray-900/80 border transition-all hover:scale-[1.02]",
+            "bg-gray-900/80 border transition-colors hover:bg-gray-900/90 hover:border-gray-700",
             expectationColors[data.expectation]
         )}>
             <CardHeader className="pb-2">
@@ -168,11 +176,11 @@ const AssetClassCard = ({ data }: { data: ClassAnalysis }) => {
                             <CardTitle className="text-lg">{data.name}</CardTitle>
                             <div className="flex items-center gap-2 mt-1">
                                 <Badge variant="outline" className={cn("text-[10px]", expectationColors[data.expectation])}>
-                                    {data.expectation}
+                                    OUTLOOK {data.expectation}
                                 </Badge>
-                                <span className={cn("text-xs font-bold flex items-center gap-1", directionColors[data.direction])}>
+                                <span className={cn("text-xs font-bold flex items-center gap-1", directionColors[data.direction])} title="Trade directive: what to do with this asset class">
                                     <DirectionIcon className="w-3 h-3" />
-                                    {data.direction}
+                                    DO {directionLabel(data.direction)}
                                 </span>
                             </div>
                         </div>
@@ -210,6 +218,30 @@ const AssetClassCard = ({ data }: { data: ClassAnalysis }) => {
                     <span className={cn("font-bold", volatilityColors[data.volatilityRisk])}>
                         {data.volatilityRisk}
                     </span>
+                </div>
+
+                <div className="grid grid-cols-3 gap-2 text-[11px] border-t border-gray-800 pt-2">
+                    <div className="text-center">
+                        <div className="text-[10px] text-gray-500 uppercase">Avg Δ</div>
+                        <div className={cn(
+                            "font-mono font-bold tabular-nums",
+                            data.performance.avgChange >= 0 ? "text-green-300" : "text-red-300"
+                        )}>
+                            {data.performance.avgChange >= 0 ? '+' : ''}{data.performance.avgChange.toFixed(2)}%
+                        </div>
+                    </div>
+                    <div className="text-center">
+                        <div className="text-[10px] text-gray-500 uppercase">Top</div>
+                        <div className="font-mono text-gray-200 truncate">
+                            {data.performance.topPerformer?.symbol || '—'}
+                        </div>
+                    </div>
+                    <div className="text-center">
+                        <div className="text-[10px] text-gray-500 uppercase">Worst</div>
+                        <div className="font-mono text-gray-200 truncate">
+                            {data.performance.worstPerformer?.symbol || '—'}
+                        </div>
+                    </div>
                 </div>
 
                 {/* Drivers */}
@@ -298,6 +330,80 @@ const SectorRow = ({ data }: { data: SectorAnalysis }) => {
                 </div>
             </div>
         </div>
+    );
+};
+
+const MicroUniversePanel = ({ data }: { data: MesoData }) => {
+    const allowed = data.microInputs?.allowedInstruments || [];
+    const prohibited = data.microInputs?.prohibitedInstruments || [];
+    return (
+        <Card className="bg-gray-900/80 border-gray-800">
+            <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-cyan-400">
+                    <Zap className="w-5 h-5" /> MICRO Universe
+                </CardTitle>
+                <CardDescription>
+                    Allowed instruments are the only symbols the MICRO layer will analyze.
+                </CardDescription>
+            </CardHeader>
+            <CardContent className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                <div className="rounded border border-gray-800 bg-gray-950/30 p-3">
+                    <div className="flex items-center justify-between">
+                        <div className="text-[10px] uppercase font-bold text-gray-500">Allowed</div>
+                        <div className="text-[10px] font-mono text-gray-400">{allowed.length}</div>
+                    </div>
+                    {allowed.length === 0 ? (
+                        <div className="text-sm text-gray-500 mt-3">No allowed instruments.</div>
+                    ) : (
+                        <div className="mt-3 space-y-2">
+                            {allowed.slice(0, 12).map((a) => (
+                                <div key={a.symbol} className="flex items-start justify-between gap-3 rounded border border-gray-800 bg-gray-900/30 px-2 py-1.5">
+                                    <div className="min-w-0">
+                                        <div className="flex items-center gap-2">
+                                            <span className="font-mono text-xs text-gray-200">{a.symbol}</span>
+                                            <span className={cn(
+                                                "text-[9px] font-bold px-1 py-0.5 rounded border",
+                                                a.direction === 'LONG'
+                                                    ? "bg-green-500/10 text-green-300 border-green-500/20"
+                                                    : "bg-red-500/10 text-red-300 border-red-500/20"
+                                            )}>
+                                                {a.direction}
+                                            </span>
+                                            <span className="text-[9px] font-bold px-1 py-0.5 rounded border bg-cyan-500/10 text-cyan-300 border-cyan-500/20 font-mono tabular-nums">
+                                                {Math.round(a.score)}
+                                            </span>
+                                        </div>
+                                        <div className="text-[10px] text-gray-500 truncate">{a.class}</div>
+                                        <div className="text-[10px] text-gray-500 mt-0.5 line-clamp-2">{a.reason}</div>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
+                <div className="rounded border border-gray-800 bg-gray-950/30 p-3">
+                    <div className="flex items-center justify-between">
+                        <div className="text-[10px] uppercase font-bold text-gray-500">Prohibited</div>
+                        <div className="text-[10px] font-mono text-gray-400">{prohibited.length}</div>
+                    </div>
+                    {prohibited.length === 0 ? (
+                        <div className="text-sm text-gray-500 mt-3">No prohibited instruments.</div>
+                    ) : (
+                        <div className="mt-3 space-y-2">
+                            {prohibited.slice(0, 12).map((p) => (
+                                <div key={p.symbol} className="rounded border border-gray-800 bg-gray-900/30 px-2 py-1.5">
+                                    <div className="flex items-center justify-between gap-3">
+                                        <span className="font-mono text-xs text-gray-300">{p.symbol}</span>
+                                        <span className="text-[9px] font-bold px-1 py-0.5 rounded border bg-red-500/10 text-red-300 border-red-500/20">BLOCK</span>
+                                    </div>
+                                    <div className="text-[10px] text-gray-500 mt-1 line-clamp-2">{p.reason}</div>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
+            </CardContent>
+        </Card>
     );
 };
 
@@ -697,6 +803,19 @@ export const MesoView = () => {
                 </div>
             </div>
 
+            <Card className="bg-gray-900/60 border-gray-800">
+                <CardContent className="p-3 text-[11px] text-gray-400">
+                    <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
+                        <div className="font-mono text-gray-500">
+                            OUTLOOK = cenário/viés do regime • DO = diretriz operacional
+                        </div>NO-TRE
+                        <div className="font-mono text-gray-500">
+                            DO AVOID = não operar esta classe agora (MICRO tende a não focar nela)
+                        </div>
+                    </div>
+                </CardContent>
+            </Card>
+
             {/* Executive Summary - Main Focus */}
             <ExecutiveSummaryPanel data={data} />
 
@@ -754,6 +873,9 @@ export const MesoView = () => {
                     </TabsTrigger>
                     <TabsTrigger value="tilts" className="flex items-center gap-2">
                         <Target className="w-4 h-4" /> Tilts
+                    </TabsTrigger>
+                    <TabsTrigger value="universe" className="flex items-center gap-2">
+                        <Zap className="w-4 h-4" /> Micro Universe
                     </TabsTrigger>
                 </TabsList>
 
@@ -822,6 +944,10 @@ export const MesoView = () => {
                 {/* Tilts Tab */}
                 <TabsContent value="tilts">
                     <TiltsPanel tilts={data.tilts} prohibitions={data.prohibitions} />
+                </TabsContent>
+
+                <TabsContent value="universe">
+                    <MicroUniversePanel data={data} />
                 </TabsContent>
             </Tabs>
 

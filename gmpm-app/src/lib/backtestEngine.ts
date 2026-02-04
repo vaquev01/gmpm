@@ -91,7 +91,7 @@ export interface BacktestConfig {
 
 // Generate signals from historical data using REAL v8.1 ENGINE
 import { StrategyAdapter } from './strategyAdapter';
-import { evaluateRealSignals, detectRegime, convertToMarketData } from './realEngine';
+import { evaluateRealSignals, detectRegime } from './realEngine';
 
 function generateBacktestSignals(candles: BacktestCandle[], config: BacktestConfig, symbol: string): BacktestSignal[] {
     const signals: BacktestSignal[] = [];
@@ -203,24 +203,19 @@ export function runBacktest(
         if (currentPosition) {
             const signal = currentPosition.signal;
             let exitPrice: number | null = null;
-            let exitReason: 'TP' | 'SL' | null = null;
 
             // Check stop loss
             if (signal.direction === 'LONG') {
                 if (candle.low <= signal.stopLoss) {
                     exitPrice = signal.stopLoss;
-                    exitReason = 'SL';
                 } else if (candle.high >= signal.takeProfit) {
                     exitPrice = signal.takeProfit;
-                    exitReason = 'TP';
                 }
             } else {
                 if (candle.high >= signal.stopLoss) {
                     exitPrice = signal.stopLoss;
-                    exitReason = 'SL';
                 } else if (candle.low <= signal.takeProfit) {
                     exitPrice = signal.takeProfit;
-                    exitReason = 'TP';
                 }
             }
 

@@ -55,7 +55,6 @@ export function calculatePositionSize(
     const stopPercent = (stopDistance / entryPrice) * 100;
 
     const quantity = riskAmount / stopDistance;
-    const riskR = riskPercent;
 
     return {
         quantity: Math.floor(quantity * 100000) / 100000, // 5 decimais
@@ -293,10 +292,8 @@ export async function executeTrade(setup: TradeSetup): Promise<ExecutedTrade> {
     });
 
     // 3. Take Profits
-    let remainingQty = quantity;
     for (const tp of setup.takeProfits) {
         const tpQty = Math.floor(quantity * tp.percent * 100000) / 100000;
-        remainingQty -= tpQty;
 
         const tpOrder = await placeOrder({
             symbol: setup.symbol,

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { analyzeSMC, type SMCAnalysis, type Candle } from '@/lib/smcEngine';
 import { Loader2, ArrowUpCircle, ArrowDownCircle, Target, Layers, Zap, Crosshair } from 'lucide-react';
@@ -14,11 +14,7 @@ export const FractalSMCView = ({ symbol }: FractalSMCViewProps) => {
     const [loading, setLoading] = useState(true);
     const [price, setPrice] = useState(0);
 
-    useEffect(() => {
-        fetchData();
-    }, [symbol]);
-
-    const fetchData = async () => {
+    const fetchData = useCallback(async () => {
         setLoading(true);
         try {
             // Fetch real historical data
@@ -53,7 +49,12 @@ export const FractalSMCView = ({ symbol }: FractalSMCViewProps) => {
         } finally {
             setLoading(false);
         }
-    };
+
+    }, [symbol]);
+
+    useEffect(() => {
+        fetchData();
+    }, [fetchData]);
 
     if (loading) {
         return (

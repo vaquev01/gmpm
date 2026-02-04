@@ -1,7 +1,7 @@
 // src/lib/engineEnhancements.ts
 // Funções de integração avançadas para o motor de cálculo
 
-import { MacroData, RealQuote } from './realEngine';
+import { MacroData } from './realEngine';
 
 // ===== TIPOS =====
 export interface COTData {
@@ -188,8 +188,10 @@ export async function fetchSMCData(symbol: string): Promise<SMCData | null> {
 }
 
 // ===== CALCULATE COT SCORE =====
-export function calculateCOTScore(cotData: COTData | undefined, assetClass: string): number {
+export function calculateCOTScore(cotData: COTData | undefined, _assetClass: string): number {
     if (!cotData) return 50; // Default neutral
+
+    void _assetClass;
 
     let score = 50;
 

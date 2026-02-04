@@ -9,12 +9,11 @@ import {
     BacktestCandle,
 } from '@/lib/backtestEngine';
 import {
-    Play, TrendingUp, TrendingDown, BarChart3, Target,
-    AlertTriangle, Activity, RefreshCw, Settings, ChevronDown, ChevronUp, Sliders
+    Play, TrendingUp,
+    Activity, RefreshCw, ChevronDown, ChevronUp, Sliders
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { cn } from '@/lib/utils';
 
 const SYMBOLS = ['SPY', 'QQQ', 'AAPL', 'MSFT', 'GOOGL', 'AMZN', 'NVDA', 'META', 'TSLA', 'BTC-USD', 'ETH-USD', 'GC=F', 'CL=F'];
 const PERIODS = ['1M', '3M', '6M', '1Y', '2Y'];

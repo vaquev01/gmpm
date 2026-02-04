@@ -1,9 +1,15 @@
-const baseUrl = process.env.SMOKE_BASE_URL || 'http://localhost:3001';
+const baseUrl = process.env.SMOKE_BASE_URL || 'http://localhost:3000';
 
 async function getJson(path) {
-  const res = await fetch(`${baseUrl}${path}`, {
-    headers: { accept: 'application/json' },
-  });
+  const url = `${baseUrl}${path}`;
+  let res;
+  try {
+    res = await fetch(url, {
+      headers: { accept: 'application/json' },
+    });
+  } catch (e) {
+    throw new Error(`Fetch failed: ${url} (${String(e)})`);
+  }
 
   const text = await res.text();
   let json;
@@ -17,9 +23,15 @@ async function getJson(path) {
 }
 
 async function getText(path) {
-  const res = await fetch(`${baseUrl}${path}`, {
-    headers: { accept: 'text/html' },
-  });
+  const url = `${baseUrl}${path}`;
+  let res;
+  try {
+    res = await fetch(url, {
+      headers: { accept: 'text/html' },
+    });
+  } catch (e) {
+    throw new Error(`Fetch failed: ${url} (${String(e)})`);
+  }
   const text = await res.text();
   return { res, text };
 }
@@ -34,6 +46,10 @@ function isFiniteNumber(n) {
 
 function isRecord(v) {
   return typeof v === 'object' && v !== null;
+}
+
+function isNumberOrNull(v) {
+  return v === null || (typeof v === 'number' && Number.isFinite(v));
 }
 
 async function main() {
@@ -67,7 +83,15 @@ async function main() {
   assert(isFiniteNumber(rates.treasury2y), 'summary.rates.treasury2y not a number');
   assert(isFiniteNumber(rates.yieldCurve), 'summary.rates.yieldCurve not a number');
 
-  const { res: marketRes, json: market } = await getJson('/api/market?limit=50');
+  const { res: macroRes, json: macroSnap } = await getJson('/api/macro');
+  assert(macroRes.ok, `/api/macro HTTP ${macroRes.status}`);
+  assert(macroSnap && macroSnap.success === true, `/api/macro success=false: ${macroSnap?.error || 'unknown error'}`);
+  assert(macroSnap.macro && typeof macroSnap.macro === 'object', '/api/macro missing macro');
+  assert(isFiniteNumber(macroSnap.macro.treasury10y), '/api/macro macro.treasury10y not a number');
+  assert(isFiniteNumber(macroSnap.macro.treasury2y), '/api/macro macro.treasury2y not a number');
+  assert(isFiniteNumber(macroSnap.macro.yieldCurve), '/api/macro macro.yieldCurve not a number');
+
+  const { res: marketRes, json: market } = await getJson('/api/market?limit=50&macro=0');
   assert(marketRes.ok, `/api/market HTTP ${marketRes.status}`);
   assert(market && market.success === true, `/api/market success=false: ${market?.error || 'unknown error'}`);
   assert(Array.isArray(market.assets), '/api/market missing assets array');
@@ -91,12 +115,6 @@ async function main() {
   const anyWithQuality = market.assets.find((a) => isRecord(a) && isRecord(a.quality) && typeof a.quality.status === 'string');
   assert(!!anyWithQuality, '/api/market missing any asset with quality.status');
 
-  const macro = market.macro;
-  assert(macro && typeof macro === 'object', '/api/market missing macro');
-  assert(isFiniteNumber(macro.treasury10y), '/api/market macro.treasury10y not a number');
-  assert(isFiniteNumber(macro.treasury2y), '/api/market macro.treasury2y not a number');
-  assert(isFiniteNumber(macro.yieldCurve), '/api/market macro.yieldCurve not a number');
-
   const { res: calRes, json: cal } = await getJson('/api/calendar?days=14');
   assert(calRes.ok, `/api/calendar HTTP ${calRes.status}`);
   assert(cal && cal.success === true, `/api/calendar success=false: ${cal?.error || 'unknown error'}`);
@@ -108,6 +126,45 @@ async function main() {
   assert(Array.isArray(news.geopolitics), '/api/news missing geopolitics array');
   assert(Array.isArray(news.technology), '/api/news missing technology array');
   assert(Array.isArray(news.headlines), '/api/news missing headlines array');
+
+  const { res: histRes, json: hist } = await getJson('/api/history?symbol=SPY&period=6M');
+  assert(histRes.ok, `/api/history HTTP ${histRes.status}`);
+  assert(hist && hist.success === true, `/api/history success=false: ${hist?.error || 'unknown error'}`);
+  assert(isRecord(hist.data), '/api/history missing data object');
+  assert(Array.isArray(hist.data.candles), '/api/history missing data.candles array');
+  assert(hist.data.candles.length > 5, '/api/history returned too few candles');
+  assert(isRecord(hist.data.stats), '/api/history missing data.stats object');
+  assert(isFiniteNumber(hist.data.stats.totalReturn), '/api/history stats.totalReturn not number');
+  assert(isFiniteNumber(hist.data.stats.annualizedReturn), '/api/history stats.annualizedReturn not number');
+  const hc0 = hist.data.candles[0];
+  assert(isRecord(hc0), '/api/history candles[0] not object');
+  assert(isFiniteNumber(hc0.open), '/api/history candles[0].open not number');
+  assert(isFiniteNumber(hc0.high), '/api/history candles[0].high not number');
+  assert(isFiniteNumber(hc0.low), '/api/history candles[0].low not number');
+  assert(isFiniteNumber(hc0.close), '/api/history candles[0].close not number');
+  assert(isFiniteNumber(hc0.changePercent), '/api/history candles[0].changePercent not number');
+
+  const { res: mtfRes, json: mtf } = await getJson('/api/mtf?symbol=SPY');
+  assert(mtfRes.ok, `/api/mtf HTTP ${mtfRes.status}`);
+  assert(mtf && mtf.success === true, `/api/mtf success=false: ${mtf?.error || 'unknown error'}`);
+  assert(isRecord(mtf.data), '/api/mtf missing data object');
+  assert(isRecord(mtf.data.timeframes), '/api/mtf missing data.timeframes object');
+  for (const tf of ['1D', '4H', '1H', '15M']) {
+    assert(isRecord(mtf.data.timeframes[tf]), `/api/mtf missing timeframe ${tf}`);
+    assert(Array.isArray(mtf.data.timeframes[tf].candles), `/api/mtf timeframe ${tf} missing candles array`);
+  }
+  assert(isRecord(mtf.data.confluence), '/api/mtf missing confluence');
+  assert(isFiniteNumber(mtf.data.confluence.score), '/api/mtf confluence.score not number');
+  assert(typeof mtf.data.confluence.bias === 'string', '/api/mtf confluence.bias not string');
+
+  const { res: mtfLiteRes, json: mtfLite } = await getJson('/api/mtf?symbol=SPY&lite=1');
+  assert(mtfLiteRes.ok, `/api/mtf?lite=1 HTTP ${mtfLiteRes.status}`);
+  assert(mtfLite && mtfLite.success === true, `/api/mtf?lite=1 success=false: ${mtfLite?.error || 'unknown error'}`);
+  assert(isRecord(mtfLite.data), '/api/mtf?lite=1 missing data object');
+  assert(isRecord(mtfLite.data.timeframes), '/api/mtf?lite=1 missing data.timeframes object');
+  assert(isRecord(mtfLite.data.timeframes['15M']), '/api/mtf?lite=1 missing timeframe 15M');
+  assert(Array.isArray(mtfLite.data.timeframes['15M'].candles), '/api/mtf?lite=1 15M candles not array');
+  assert(mtfLite.data.timeframes['15M'].candles.length === 0, '/api/mtf?lite=1 expected empty 15M candles');
 
   // /api/technical should return indicator set for at least one symbol
   const { res: techRes, json: tech } = await getJson('/api/technical?symbol=SPY');
@@ -159,13 +216,53 @@ async function main() {
     assert(typeof cls.liquidityScore === 'number', '/api/meso class missing liquidityScore');
   }
 
+  // Pipeline integration: MESO -> MICRO -> LAB (single symbol)
+  {
+    const allowed = meso.microInputs?.allowedInstruments;
+    if (Array.isArray(allowed) && allowed.length > 0) {
+      const pick = allowed.find((i) => isRecord(i) && typeof i.symbol === 'string' && (i.direction === 'LONG' || i.direction === 'SHORT')) || allowed[0];
+      const sym = String(pick.symbol);
+      const dir = pick.direction === 'SHORT' ? 'SHORT' : 'LONG';
+
+      // MICRO override should accept symbol + direction
+      const { res: microRes, json: micro } = await getJson(`/api/micro?symbol=${encodeURIComponent(sym)}&direction=${encodeURIComponent(dir)}`);
+      assert(microRes.ok, `/api/micro override HTTP ${microRes.status}`);
+      assert(micro && micro.success === true, `/api/micro override success=false: ${micro?.error || 'unknown error'}`);
+      assert(Array.isArray(micro.analyses), '/api/micro override missing analyses array');
+      assert(micro.analyses.length === 1, '/api/micro override expected exactly 1 analysis');
+      const a = micro.analyses[0];
+      assert(isRecord(a), '/api/micro analysis[0] not object');
+      assert(typeof a.symbol === 'string', '/api/micro analysis[0] missing symbol');
+      assert(isRecord(a.recommendation), '/api/micro analysis[0] missing recommendation');
+
+      // LAB report should be consistent with MESO direction
+      const { res: labRes, json: lab } = await getJson(`/api/lab?symbol=${encodeURIComponent(sym)}`);
+      assert(labRes.ok, `/api/lab HTTP ${labRes.status}`);
+      assert(lab && lab.success === true, `/api/lab success=false: ${lab?.error || 'unknown error'}`);
+      assert(isRecord(lab.report), '/api/lab missing report object');
+      assert(lab.report.symbol === sym, '/api/lab report.symbol mismatch');
+      assert(isRecord(lab.report.summary), '/api/lab missing report.summary');
+      assert(lab.report.summary.direction === dir, '/api/lab summary.direction not aligned with MESO direction');
+
+      // Levels/metrics basic invariants
+      assert(isRecord(lab.report.levels), '/api/lab missing report.levels');
+      assert(isRecord(lab.report.metrics), '/api/lab missing report.metrics');
+      assert(isNumberOrNull(lab.report.levels.entry), '/api/lab levels.entry must be number|null');
+      assert(isNumberOrNull(lab.report.levels.stopLoss), '/api/lab levels.stopLoss must be number|null');
+      assert(Array.isArray(lab.report.levels.takeProfits), '/api/lab levels.takeProfits must be array');
+      assert(isNumberOrNull(lab.report.metrics.rr), '/api/lab metrics.rr must be number|null');
+      assert(isNumberOrNull(lab.report.metrics.evR), '/api/lab metrics.evR must be number|null');
+      assert(isNumberOrNull(lab.report.metrics.rrMin), '/api/lab metrics.rrMin must be number|null');
+    }
+  }
+
   // /api/server-logs should be reachable, clearable, and then populated by market/news calls
   {
     const clearRes = await fetch(`${baseUrl}/api/server-logs`, { method: 'DELETE' });
     assert(clearRes.ok, `/api/server-logs DELETE HTTP ${clearRes.status}`);
 
     // Generate logs
-    await getJson('/api/market?limit=5');
+    await getJson('/api/market?limit=5&macro=0');
     await getJson('/api/news?limit=5');
 
     const { res: slRes, json: sl } = await getJson('/api/server-logs');

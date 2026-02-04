@@ -19,11 +19,6 @@ import {
     type TechnicalData,
     type SMCData,
 } from './engineEnhancements';
-import {
-    getAdjustedWeights,
-    loadLearningState,
-    type LearningState,
-} from './continuousLearning';
 
 // ===== PESOS DO PRD v8.1 =====
 const WEIGHTS = {
@@ -111,9 +106,25 @@ export interface TradeSignal extends Signal {
 // ===== FETCH FUNCTIONS =====
 export async function fetchRealMarketData(): Promise<MarketResponse | null> {
     try {
-        const response = await fetch('/api/market');
-        const data = await response.json();
-        return data.success ? data : null;
+        const [marketRes, macroRes] = await Promise.all([
+            fetch('/api/market?macro=0', { cache: 'no-store' }),
+            fetch('/api/macro', { cache: 'no-store' }),
+        ]);
+
+        const market = await marketRes.json().catch(() => null);
+        if (!market || typeof market !== 'object' || !(market as { success?: boolean }).success) return null;
+
+        const macroJson = await macroRes.json().catch(() => null);
+        const macroObj = (macroJson && typeof macroJson === 'object' && (macroJson as Record<string, unknown>).macro && typeof (macroJson as Record<string, unknown>).macro === 'object')
+            ? ((macroJson as Record<string, unknown>).macro as MacroData)
+            : null;
+
+        const merged = {
+            ...(market as Record<string, unknown>),
+            macro: macroObj || (market as Record<string, unknown>).macro,
+        };
+
+        return merged as MarketResponse;
     } catch {
         return null;
     }
@@ -331,14 +342,6 @@ function getMarketSession(timestamp?: number): { session: string; quality: numbe
     const utcHour = now.getUTCHours();
     const utcMinutes = now.getUTCMinutes();
     const time = utcHour + utcMinutes / 60;
-
-    // Sessions (UTC times)
-    const sessions = {
-        sydney: { start: 22, end: 7, name: 'SYDNEY' },
-        tokyo: { start: 0, end: 9, name: 'TOKYO' },
-        london: { start: 8, end: 16, name: 'LONDON' },
-        newYork: { start: 13, end: 22, name: 'NEW_YORK' },
-    };
 
     const openMarkets: string[] = [];
 

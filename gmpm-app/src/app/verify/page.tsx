@@ -45,7 +45,8 @@ export default function VerifyPage() {
   const initialChecks = useMemo<CheckResult[]>(
     () => [
       { name: 'FRED Macro', path: '/api/fred', status: 'idle' },
-      { name: 'Market', path: '/api/market?limit=50', status: 'idle' },
+      { name: 'Macro', path: '/api/macro', status: 'idle' },
+      { name: 'Market', path: '/api/market?limit=50&macro=0', status: 'idle' },
       { name: 'Regime', path: '/api/regime', status: 'idle' },
       { name: 'News', path: '/api/news?limit=10', status: 'idle' },
       { name: 'Calendar', path: '/api/calendar?days=14', status: 'idle' },
@@ -91,6 +92,11 @@ export default function VerifyPage() {
             summary = rates
               ? `FF=${fmt(rates.fedFunds)} | 10Y=${fmt(rates.treasury10y)} | 2Y=${fmt(rates.treasury2y)} | Curve=${fmt(rates.curveStatus)}`
               : undefined;
+          } else if (c.path.startsWith('/api/macro')) {
+            const macro = isRecord(json) && isRecord(json.macro) ? json.macro : null;
+            summary = macro
+              ? `VIX=${fmt(macro.vix)} | 10Y=${fmt(macro.treasury10y)} | 2Y=${fmt(macro.treasury2y)} | DXY=${fmt(macro.dollarIndex)} | Curve=${fmt(macro.yieldCurve)}`
+              : undefined;
           } else if (c.path.startsWith('/api/market')) {
             const macro = isRecord(json) && isRecord(json.macro) ? json.macro : null;
             const degraded = isRecord(json) && typeof json.degraded === 'boolean' ? json.degraded : undefined;
@@ -108,7 +114,7 @@ export default function VerifyPage() {
 
             summary = macro
               ? `VIX=${fmt(macro.vix)} | 10Y=${fmt(macro.treasury10y)} | 2Y=${fmt(macro.treasury2y)} | DXY=${fmt(macro.dollarIndex)} | degraded=${fmt(degraded)} tradeEnabled=${fmt(tradeEnabled)} cov=${fmt(coverage)} | Q(ok=${fmt(okN)} stale=${fmt(staleN)} suspect=${fmt(suspectN)}) | hist=${hasHistory ? 'yes' : 'no'} ts=${hasQuoteTs ? 'yes' : 'no'}`
-              : undefined;
+              : `degraded=${fmt(degraded)} tradeEnabled=${fmt(tradeEnabled)} cov=${fmt(coverage)} | Q(ok=${fmt(okN)} stale=${fmt(staleN)} suspect=${fmt(suspectN)}) | hist=${hasHistory ? 'yes' : 'no'} ts=${hasQuoteTs ? 'yes' : 'no'}`;
           } else if (c.path.startsWith('/api/regime')) {
             const snap = isRecord(json) && isRecord(json.snapshot) ? json.snapshot : null;
             const regime = snap && typeof snap.regime === 'string' ? snap.regime : 'N/A';

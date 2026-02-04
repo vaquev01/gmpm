@@ -6,7 +6,7 @@ import { PaperTradingView } from './PaperTradingView';
 import { LearningInsightsView } from './LearningInsightsView';
 import { RiskDashboardView } from './RiskDashboardView';
 import { cn } from '@/lib/utils';
-import { Factory, Play, Shield, FlaskConical, History } from 'lucide-react';
+import { Factory, Shield, FlaskConical, History } from 'lucide-react';
 import { useStore } from '@/store/useStore';
 import { FactoryTab } from '@/types';
 

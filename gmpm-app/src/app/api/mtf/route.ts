@@ -1,4 +1,6 @@
 import { NextResponse } from 'next/server';
+import { yahooFetchJson } from '@/lib/yahooClient';
+import { serverLog } from '@/lib/serverLogs';
 
 // ===== MULTI-TIMEFRAME ANALYSIS API =====
 // Fetches candles in multiple timeframes for confluence analysis
@@ -40,6 +42,23 @@ interface MTFResult {
     };
 }
 
+type YahooChartResponse = {
+    chart?: {
+        result?: Array<{
+            timestamp?: number[];
+            indicators?: {
+                quote?: Array<{
+                    open?: Array<number | null>;
+                    high?: Array<number | null>;
+                    low?: Array<number | null>;
+                    close?: Array<number | null>;
+                    volume?: Array<number | null>;
+                }>;
+            };
+        }>;
+    };
+};
+
 // Timeframe intervals for Yahoo Finance
 const INTERVALS: Record<string, { interval: string; range: string }> = {
     '1D': { interval: '1d', range: '3mo' },
@@ -47,6 +66,14 @@ const INTERVALS: Record<string, { interval: string; range: string }> = {
     '1H': { interval: '1h', range: '5d' },
     '15M': { interval: '15m', range: '5d' },
 };
+
+type MtfCacheEntry = {
+    ts: number;
+    payload: unknown;
+};
+
+const mtfCache = new Map<string, MtfCacheEntry>();
+const MTF_CACHE_TTL_MS = 30_000;
 
 // Aggregate 1h candles to 4h
 function aggregateTo4H(candles: CandleData[]): CandleData[] {
@@ -71,16 +98,16 @@ function aggregateTo4H(candles: CandleData[]): CandleData[] {
 async function fetchCandles(symbol: string, interval: string, range: string): Promise<CandleData[]> {
     try {
         const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=${interval}&range=${range}`;
-        const response = await fetch(url, {
-            headers: { 'User-Agent': 'GMPM/1.0' },
-        });
-
-        if (!response.ok) {
-            console.error(`Failed to fetch ${symbol} ${interval}: ${response.status}`);
+        const ttlMs = interval === '1d' ? 60_000 : 30_000;
+        const y = await yahooFetchJson(url, ttlMs);
+        if (!y.ok || !y.data) {
+            if (y.status) {
+                serverLog('warn', 'mtf_yahoo_fetch_failed', { symbol, interval, range, status: y.status, cached: y.cached, stale: y.stale }, 'api/mtf');
+            }
             return [];
         }
 
-        const data = await response.json();
+        const data = y.data as YahooChartResponse;
         const result = data.chart?.result?.[0];
 
         if (!result || !result.timestamp) return [];
@@ -90,23 +117,37 @@ async function fetchCandles(symbol: string, interval: string, range: string): Pr
 
         if (!quote) return [];
 
+        const open = quote.open || [];
+        const high = quote.high || [];
+        const low = quote.low || [];
+        const close = quote.close || [];
+        const volume = quote.volume || [];
+
+        const coalesceNum = (v: number | null | undefined, fallback: number) => (v == null ? fallback : v);
+        const coalesceVol = (v: number | null | undefined) => (v == null ? 0 : v);
+
         const candles: CandleData[] = [];
         for (let i = 0; i < timestamps.length; i++) {
-            if (quote.open[i] != null && quote.close[i] != null) {
+            const o = open[i];
+            const c = close[i];
+            if (o != null && c != null) {
+                const h = coalesceNum(high[i], o);
+                const l = coalesceNum(low[i], o);
+                const v = coalesceVol(volume[i]);
                 candles.push({
                     timestamp: timestamps[i] * 1000,
-                    open: quote.open[i],
-                    high: quote.high[i] || quote.open[i],
-                    low: quote.low[i] || quote.open[i],
-                    close: quote.close[i],
-                    volume: quote.volume[i] || 0,
+                    open: o,
+                    high: h,
+                    low: l,
+                    close: c,
+                    volume: v,
                 });
             }
         }
 
         return candles;
     } catch (error) {
-        console.error(`Error fetching ${symbol} ${interval}:`, error);
+        serverLog('warn', 'mtf_yahoo_fetch_error', { symbol, interval, range, error: String(error) }, 'api/mtf');
         return [];
     }
 }
@@ -232,6 +273,19 @@ function calculateConfluence(timeframes: Record<string, TimeframeAnalysis>): MTF
 export async function GET(request: Request) {
     const { searchParams } = new URL(request.url);
     const symbol = searchParams.get('symbol') || 'AAPL';
+    const lite = searchParams.get('lite') === '1';
+
+    const cacheKey = `${symbol}|${lite ? 'lite' : 'full'}`;
+    const cached = mtfCache.get(cacheKey);
+    const now = Date.now();
+    if (cached && (now - cached.ts) < MTF_CACHE_TTL_MS) {
+        return NextResponse.json({
+            success: true,
+            cached: true,
+            cacheAge: now - cached.ts,
+            data: cached.payload,
+        });
+    }
 
     try {
         const timeframes: Record<string, TimeframeAnalysis> = {};
@@ -240,17 +294,18 @@ export async function GET(request: Request) {
         const dailyCandles = await fetchCandles(symbol, INTERVALS['1D'].interval, INTERVALS['1D'].range);
         timeframes['1D'] = analyzeTimeframe(dailyCandles, '1D');
 
-        // Fetch 1H and aggregate to 4H
+        // Fetch 1H once and reuse for 4H aggregation + 1H analysis
         const hourlyCandles1M = await fetchCandles(symbol, '1h', '1mo');
         timeframes['4H'] = analyzeTimeframe(aggregateTo4H(hourlyCandles1M), '4H');
+        timeframes['1H'] = analyzeTimeframe(hourlyCandles1M, '1H');
 
-        // Fetch 1H recent
-        const hourlyCandles = await fetchCandles(symbol, INTERVALS['1H'].interval, INTERVALS['1H'].range);
-        timeframes['1H'] = analyzeTimeframe(hourlyCandles, '1H');
-
-        // Fetch 15M
-        const m15Candles = await fetchCandles(symbol, INTERVALS['15M'].interval, INTERVALS['15M'].range);
-        timeframes['15M'] = analyzeTimeframe(m15Candles, '15M');
+        // Fetch 15M (optional)
+        if (lite) {
+            timeframes['15M'] = analyzeTimeframe([], '15M');
+        } else {
+            const m15Candles = await fetchCandles(symbol, INTERVALS['15M'].interval, INTERVALS['15M'].range);
+            timeframes['15M'] = analyzeTimeframe(m15Candles, '15M');
+        }
 
         // Calculate confluence
         const confluence = calculateConfluence(timeframes);
@@ -261,16 +316,30 @@ export async function GET(request: Request) {
             confluence,
         };
 
-        return NextResponse.json({
+        const payload = {
             success: true,
             data: result,
-        });
+            degraded: Object.values(timeframes).some(tf => tf.candles.length === 0),
+        };
+
+        mtfCache.set(cacheKey, { ts: now, payload: result });
+        return NextResponse.json(payload);
 
     } catch (error) {
-        console.error('MTF API Error:', error);
+        serverLog('error', 'mtf_api_error', { error: String(error) }, 'api/mtf');
         return NextResponse.json({
-            success: false,
-            error: 'Failed to fetch multi-timeframe data',
-        }, { status: 500 });
+            success: true,
+            degraded: true,
+            data: {
+                symbol,
+                timeframes: {
+                    '1D': analyzeTimeframe([], '1D'),
+                    '4H': analyzeTimeframe([], '4H'),
+                    '1H': analyzeTimeframe([], '1H'),
+                    '15M': analyzeTimeframe([], '15M'),
+                },
+                confluence: { score: 50, bias: 'NEUTRAL', aligned: false, description: 'Degraded: no data' },
+            },
+        });
     }
 }

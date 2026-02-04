@@ -58,7 +58,7 @@ const LiveTicker = ({ data }: { data: MacroData | null }) => {
     return (
         <div className="w-full bg-gray-900 border-y border-gray-800 py-2 overflow-hidden flex items-center relative gap-4">
             <div className="px-4 text-[10px] font-bold text-red-500 animate-pulse whitespace-nowrap z-10 bg-gray-900">LIVE FEED ●</div>
-            <div className="flex gap-12 animate-[marquee_30s_linear_infinite] whitespace-nowrap text-xs text-gray-400 font-mono">
+            <div className="flex gap-12 animate-[marquee_30s_linear_infinite] hover:[animation-play-state:paused] whitespace-nowrap text-xs text-gray-400 font-mono tabular-nums">
                 <span><span className="text-green-500">GROWTH:</span> Real GDP {gdpVal}B ({data.summary.gdp.trend})</span>
                 <span><span className="text-blue-500">INFLATION:</span> CPI {cpiVal} ({data.summary.inflation.trend})</span>
                 <span><span className="text-red-500">RATES:</span> 10Y Yield {y10}% | Yield Curve: {yc}% ({data.summary.rates.curveStatus})</span>
@@ -108,7 +108,7 @@ const MetricCard = ({ icon: Icon, label, value, trend, status, color = "text-blu
             </div>
             <div>
                 <div className="text-[10px] uppercase text-gray-500 font-bold tracking-wider">{label}</div>
-                <div className="text-xl font-bold text-gray-100">{value}</div>
+                <div className="text-xl font-bold text-gray-100 font-mono tabular-nums">{value}</div>
             </div>
         </div>
         <div className="text-right">
@@ -300,8 +300,11 @@ export const MacroView = () => {
                     <div className="flex gap-4">
                         <div className="text-right hidden md:block">
                             <div className="text-[10px] text-gray-500 uppercase font-bold">System Status</div>
-                            <div className="text-xs text-green-400 font-mono flex items-center gap-2 justify-end">
-                                OPERATIONAL <Activity className="w-3 h-3" />
+                            <div className={cn(
+                                "text-xs font-mono flex items-center gap-2 justify-end",
+                                error ? "text-yellow-400" : "text-green-400"
+                            )}>
+                                {error ? 'DEGRADED' : 'OPERATIONAL'} <Activity className="w-3 h-3" />
                             </div>
                         </div>
                         <div className="text-right hidden md:block">

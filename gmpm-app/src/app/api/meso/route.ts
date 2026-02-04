@@ -33,17 +33,26 @@ interface MacroData {
     treasury2y?: number;
     yieldCurve?: number;
     dollarIndex?: number;
-    fearGreed?: number;
+    fearGreed?: unknown;
 }
 
 async function fetchMarketData(): Promise<{ assets: MarketAsset[], macro: MacroData }> {
     try {
-        const res = await fetch(`${baseUrl}/api/market?limit=150`, { cache: 'no-store' });
-        if (!res.ok) return { assets: [], macro: {} };
-        const data = await res.json();
-        return { 
-            assets: data.assets || [], 
-            macro: data.macro || {} 
+        const [marketRes, macroRes] = await Promise.all([
+            fetch(`${baseUrl}/api/market?limit=150&macro=0`, { cache: 'no-store' }),
+            fetch(`${baseUrl}/api/macro`, { cache: 'no-store' }),
+        ]);
+
+        const marketJson = await marketRes.json().catch(() => null);
+        const macroJson = await macroRes.json().catch(() => null);
+
+        const mj = (marketJson && typeof marketJson === 'object') ? (marketJson as Record<string, unknown>) : {};
+        const mc = (macroJson && typeof macroJson === 'object') ? (macroJson as Record<string, unknown>) : {};
+        const macro = (mc && typeof mc.macro === 'object' && mc.macro !== null) ? (mc.macro as MacroData) : {};
+
+        return {
+            assets: (mj.assets as MarketAsset[]) || [],
+            macro: macro || {},
         };
     } catch {
         return { assets: [], macro: {} };

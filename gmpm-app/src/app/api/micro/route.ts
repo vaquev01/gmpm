@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { serverLog } from '@/lib/serverLogs';
 
 // Types
 interface MesoInput {
@@ -7,6 +8,19 @@ interface MesoInput {
     class: string;
     reason: string;
 }
+
+type MTFTrend = 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+
+type MTFSnapshot = {
+    trends: {
+        h4: MTFTrend;
+        h1: MTFTrend;
+        m15: MTFTrend;
+    };
+    alignment: 'ALIGNED' | 'CONFLICTING' | 'PARTIAL';
+    confluenceScore: number;
+    bias: 'LONG' | 'SHORT' | 'NEUTRAL';
+};
 
 interface TechnicalAnalysis {
     trend: {
@@ -48,6 +62,61 @@ interface TechnicalAnalysis {
     };
 }
 
+async function fetchMTFSnapshot(symbol: string): Promise<MTFSnapshot | null> {
+    try {
+        const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000';
+        const res = await fetch(`${baseUrl}/api/mtf?symbol=${encodeURIComponent(symbol)}&lite=1`, { cache: 'no-store' });
+        if (!res.ok) return null;
+        const json = await res.json();
+        if (!json?.success || !json?.data?.timeframes) return null;
+
+        const tf = json.data.timeframes as Record<string, { trend?: MTFTrend; strength?: number }>;
+        const t4h = tf['4H']?.trend || 'NEUTRAL';
+        const t1h = tf['1H']?.trend || 'NEUTRAL';
+        const t15 = tf['15M']?.trend || 'NEUTRAL';
+        const alignment = (t4h === t1h && t1h === t15)
+            ? 'ALIGNED'
+            : (t4h === t1h || t1h === t15 || t4h === t15)
+                ? 'PARTIAL'
+                : 'CONFLICTING';
+
+        const confluenceScore = typeof json.data.confluence?.score === 'number' ? json.data.confluence.score : 50;
+        const bias = (json.data.confluence?.bias as MTFSnapshot['bias']) || 'NEUTRAL';
+
+        return {
+            trends: { h4: t4h, h1: t1h, m15: t15 },
+            alignment,
+            confluenceScore,
+            bias,
+        };
+    } catch {
+        return null;
+    }
+}
+
+async function mapWithConcurrency<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+    const results: R[] = new Array(items.length);
+    let nextIndex = 0;
+
+    const workers = Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, async () => {
+        while (true) {
+            const idx = nextIndex;
+            nextIndex += 1;
+            if (idx >= items.length) return;
+            results[idx] = await fn(items[idx]);
+        }
+    });
+
+    await Promise.all(workers);
+    return results;
+}
+
+interface SetupTrigger {
+    price: number;
+    condition: string;
+    type: 'PRICE_BREAK' | 'CANDLE_CLOSE' | 'VOLUME_CONFIRM' | 'PATTERN_COMPLETE';
+}
+
 interface Setup {
     id: string;
     symbol: string;
@@ -67,11 +136,14 @@ interface Setup {
     thesis: string;
     mesoAlignment: boolean;
     technicalScore: number;
+    trigger?: SetupTrigger;
 }
 
 interface MicroAnalysis {
     symbol: string;
     displaySymbol: string;
+    name?: string;
+    assetClass?: string;
     price: number;
     technical: TechnicalAnalysis;
     setups: Setup[];
@@ -79,6 +151,13 @@ interface MicroAnalysis {
         action: 'EXECUTE' | 'WAIT' | 'AVOID';
         reason: string;
         bestSetup: Setup | null;
+        trigger?: SetupTrigger;
+        metrics?: {
+            pWin: number;
+            rrMin: number;
+            evR: number;
+            modelRisk: 'LOW' | 'MED' | 'HIGH';
+        };
     };
     scenarioAnalysis?: {
         status: 'PRONTO' | 'DESENVOLVENDO' | 'CONTRA';
@@ -193,6 +272,11 @@ function calculateSmartLevels(
     
     if (useStructuralLevels) {
         const { levels, smc } = technical;
+        const maxTp1Dist = atr * tp1Multiplier * 2;
+        const maxTp2Dist = atr * tp2Multiplier * 2;
+        const maxTp3Dist = atr * tp3Multiplier * 2;
+        const withinUp = (lvl: number, maxDist: number) => lvl > price && (lvl - price) <= maxDist;
+        const withinDown = (lvl: number, maxDist: number) => lvl < price && (price - lvl) <= maxDist;
         
         // STOP LOSS: Use order blocks or support/resistance
         if (isLong) {
@@ -220,18 +304,30 @@ function calculateSmartLevels(
             const sellLiquidity = smc.liquidityPools.filter(lp => lp.type === 'SELL_SIDE' && lp.level > price);
             
             if (resistances.length >= 1) {
-                tp1 = resistances[0];
-                levelSources.push('TP1: Resistance');
+                const candidate = resistances[0];
+                if (withinUp(candidate, maxTp1Dist)) {
+                    tp1 = candidate;
+                    levelSources.push('TP1: Resistance');
+                } else {
+                    levelSources.push('TP1: ATR-based (structural too far)');
+                }
             }
             if (resistances.length >= 2) {
-                tp2 = resistances[1];
-                levelSources.push('TP2: Resistance');
+                const candidate = resistances[1];
+                if (withinUp(candidate, maxTp2Dist)) {
+                    tp2 = candidate;
+                    levelSources.push('TP2: Resistance');
+                } else {
+                    levelSources.push('TP2: ATR-based (structural too far)');
+                }
             }
             if (sellLiquidity.length > 0) {
                 const liquidityTarget = sellLiquidity.sort((a, b) => a.level - b.level)[0].level;
-                if (liquidityTarget > tp2) {
+                if (liquidityTarget > tp2 && withinUp(liquidityTarget, maxTp3Dist)) {
                     tp3 = liquidityTarget;
                     levelSources.push('TP3: Liquidity Pool');
+                } else if (!withinUp(liquidityTarget, maxTp3Dist)) {
+                    levelSources.push('TP3: ATR-based (liquidity too far)');
                 }
             }
         } else {
@@ -258,18 +354,30 @@ function calculateSmartLevels(
             const buyLiquidity = smc.liquidityPools.filter(lp => lp.type === 'BUY_SIDE' && lp.level < price);
             
             if (supports.length >= 1) {
-                tp1 = supports[0];
-                levelSources.push('TP1: Support');
+                const candidate = supports[0];
+                if (withinDown(candidate, maxTp1Dist)) {
+                    tp1 = candidate;
+                    levelSources.push('TP1: Support');
+                } else {
+                    levelSources.push('TP1: ATR-based (structural too far)');
+                }
             }
             if (supports.length >= 2) {
-                tp2 = supports[1];
-                levelSources.push('TP2: Support');
+                const candidate = supports[1];
+                if (withinDown(candidate, maxTp2Dist)) {
+                    tp2 = candidate;
+                    levelSources.push('TP2: Support');
+                } else {
+                    levelSources.push('TP2: ATR-based (structural too far)');
+                }
             }
             if (buyLiquidity.length > 0) {
                 const liquidityTarget = buyLiquidity.sort((a, b) => b.level - a.level)[0].level;
-                if (liquidityTarget < tp2) {
+                if (liquidityTarget < tp2 && withinDown(liquidityTarget, maxTp3Dist)) {
                     tp3 = liquidityTarget;
                     levelSources.push('TP3: Liquidity Pool');
+                } else if (!withinDown(liquidityTarget, maxTp3Dist)) {
+                    levelSources.push('TP3: ATR-based (liquidity too far)');
                 }
             }
         }
@@ -307,34 +415,51 @@ async function fetchMesoInputs(): Promise<{
             };
         }
     } catch (e) {
-        console.error('Failed to fetch meso inputs:', e);
+        serverLog('warn', 'micro_meso_inputs_fetch_failed', { error: String(e) }, 'api/micro');
     }
     return { instruments: [], prohibited: [], context: { favoredDirection: 'NEUTRAL', volatilityContext: 'NORMAL', regime: 'NEUTRAL', bias: 'NEUTRAL', classAnalysis: {} } };
 }
 
 // Fetch market data for a symbol
-async function fetchMarketData(symbols: string[]): Promise<Map<string, { price: number; high: number; low: number; volume: number; rsi: number; history: number[] }>> {
+async function fetchMarketData(symbols: string[]): Promise<Map<string, { price: number; high: number; low: number; volume: number; avgVolume: number; rsi: number; history: number[]; name?: string; assetClass?: string }>> {
     const result = new Map();
     try {
         const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000';
-        const res = await fetch(`${baseUrl}/api/market?limit=300`, { cache: 'no-store' });
+        if (symbols.length === 0) return result;
+        const symbolsParam = symbols.map((s) => String(s || '').trim()).filter(Boolean).join(',');
+        const res = await fetch(`${baseUrl}/api/market?symbols=${encodeURIComponent(symbolsParam)}&macro=0`, { cache: 'no-store' });
         const data = await res.json();
         if (data.success && Array.isArray(data.data)) {
             for (const asset of data.data) {
-                if (symbols.some(s => asset.symbol?.includes(s) || asset.displaySymbol?.includes(s))) {
-                    result.set(asset.displaySymbol || asset.symbol, {
+                const aSym = typeof asset.symbol === 'string' ? asset.symbol : '';
+                const aDisp = typeof asset.displaySymbol === 'string' ? asset.displaySymbol : '';
+                const normalize = (s: string) => s.replace('=X', '').replace('-USD', '').replace('=F', '');
+                const aN = normalize(aSym || aDisp);
+                const matches = symbols.some((s) => {
+                    const sN = normalize(s);
+                    return s === aSym || s === aDisp || sN === aN;
+                });
+
+                if (matches) {
+                    const payload = {
                         price: asset.price,
                         high: asset.high,
                         low: asset.low,
                         volume: asset.volume,
+                        avgVolume: typeof asset.avgVolume === 'number' && Number.isFinite(asset.avgVolume) ? asset.avgVolume : 0,
                         rsi: asset.rsi,
                         history: asset.history || [],
-                    });
+                        name: typeof asset.name === 'string' ? asset.name : undefined,
+                        assetClass: typeof asset.assetClass === 'string' ? asset.assetClass : undefined,
+                    };
+
+                    if (aSym) result.set(aSym, payload);
+                    if (aDisp) result.set(aDisp, payload);
                 }
             }
         }
     } catch (e) {
-        console.error('Failed to fetch market data:', e);
+        serverLog('warn', 'micro_market_fetch_failed', { error: String(e) }, 'api/micro');
     }
     return result;
 }
@@ -350,21 +475,6 @@ function calculateEMA(prices: number[], period: number): number {
     return ema;
 }
 
-// Calculate ATR
-function calculateATR(highs: number[], lows: number[], closes: number[], period: number = 14): number {
-    if (highs.length < period + 1) return (highs[0] - lows[0]) || 0;
-    const trs: number[] = [];
-    for (let i = 1; i < highs.length && i <= period; i++) {
-        const tr = Math.max(
-            highs[i] - lows[i],
-            Math.abs(highs[i] - closes[i - 1]),
-            Math.abs(lows[i] - closes[i - 1])
-        );
-        trs.push(tr);
-    }
-    return trs.reduce((a, b) => a + b, 0) / trs.length;
-}
-
 // Determine trend from price vs EMAs (more sensitive)
 function determineTrend(price: number, ema21: number, ema50: number): 'BULLISH' | 'BEARISH' | 'NEUTRAL' {
     const threshold = price * 0.001; // 0.1% threshold
@@ -378,7 +488,8 @@ function determineTrend(price: number, ema21: number, ema50: number): 'BULLISH' 
 // Generate technical analysis for a symbol
 function generateTechnicalAnalysis(
     symbol: string,
-    marketData: { price: number; high: number; low: number; volume: number; rsi: number; history: number[] }
+    marketData: { price: number; high: number; low: number; volume: number; avgVolume: number; rsi: number; history: number[] },
+    mtf?: MTFSnapshot | null
 ): TechnicalAnalysis {
     const { price, high, low, rsi, history } = marketData;
     
@@ -387,13 +498,14 @@ function generateTechnicalAnalysis(
     const ema50 = history.length > 0 ? calculateEMA(history, 50) : price;
     const ema200 = history.length > 0 ? calculateEMA(history, 200) : price;
     
-    // Simulate multi-timeframe (in real app, fetch different TF data)
-    const h4Trend = determineTrend(price, ema50, ema200);
-    const h1Trend = determineTrend(price, ema21, ema50);
-    const m15Trend = determineTrend(price, price * 0.999, ema21); // Simplified
-    
-    const alignment = h4Trend === h1Trend && h1Trend === m15Trend ? 'ALIGNED' :
-        h4Trend === h1Trend || h1Trend === m15Trend ? 'PARTIAL' : 'CONFLICTING';
+    const h4Trend = mtf?.trends?.h4 ?? determineTrend(price, ema50, ema200);
+    const h1Trend = mtf?.trends?.h1 ?? determineTrend(price, ema21, ema50);
+    const m15Trend = mtf?.trends?.m15 ?? determineTrend(price, price * 0.999, ema21);
+
+    const alignment = mtf?.alignment ?? (
+        h4Trend === h1Trend && h1Trend === m15Trend ? 'ALIGNED' :
+            h4Trend === h1Trend || h1Trend === m15Trend ? 'PARTIAL' : 'CONFLICTING'
+    );
     
     // Structure analysis - ATR normalized as percentage of price
     const dailyRange = high - low;
@@ -416,7 +528,9 @@ function generateTechnicalAnalysis(
     const bbPosition = price > bbUpper ? 'UPPER' : price < bbLower ? 'LOWER' : 'MIDDLE';
     
     // Volume analysis
-    const avgVolume = history.length > 0 ? history.reduce((a, b) => a + b, 0) / history.length : 1;
+    const avgVolume = (typeof marketData.avgVolume === 'number' && Number.isFinite(marketData.avgVolume) && marketData.avgVolume > 0)
+        ? marketData.avgVolume
+        : 0;
     const relativeVolume = avgVolume > 0 ? marketData.volume / avgVolume : 1;
     
     // SMC analysis (simplified)
@@ -724,11 +838,81 @@ function generateSetups(
     return { setup, scenarioAnalysis, levelSources };
 }
 
+// Calculate trigger for WAIT status - tells user exactly what price/condition activates the setup
+function calculateTrigger(setup: Setup, technical: TechnicalAnalysis): SetupTrigger {
+    const { direction, entry, type } = setup;
+    const { levels, indicators, smc, volume } = technical;
+    const isLong = direction === 'LONG';
+    
+    // 1. Volume confirmation needed
+    if (volume.trend === 'DECREASING' || volume.relative < 0.8) {
+        return {
+            price: entry,
+            condition: `Aguardar volume > 1.2x média (atual: ${volume.relative.toFixed(1)}x). Candle de confirmação com volume.`,
+            type: 'VOLUME_CONFIRM',
+        };
+    }
+    
+    // 2. Price needs to break key level
+    if (type === 'BREAKOUT') {
+        const breakLevel = isLong ? levels.resistance[0] : levels.support[0];
+        return {
+            price: breakLevel,
+            condition: isLong 
+                ? `Rompimento acima de ${breakLevel.toFixed(4)} com fechamento de candle H1.`
+                : `Rompimento abaixo de ${breakLevel.toFixed(4)} com fechamento de candle H1.`,
+            type: 'PRICE_BREAK',
+        };
+    }
+    
+    // 3. Pullback to zone
+    if (type === 'PULLBACK' || smc.premiumDiscount === 'EQUILIBRIUM') {
+        const targetZone = isLong ? levels.support[0] : levels.resistance[0];
+        return {
+            price: targetZone,
+            condition: isLong
+                ? `Aguardar pullback até ${targetZone.toFixed(4)} (zona de desconto). Entrada no toque/rejeição.`
+                : `Aguardar pullback até ${targetZone.toFixed(4)} (zona premium). Entrada no toque/rejeição.`,
+            type: 'PRICE_BREAK',
+        };
+    }
+    
+    // 4. Order Block test
+    if (smc.orderBlocks.length > 0) {
+        const ob = smc.orderBlocks[0];
+        const obLevel = isLong ? ob.low : ob.high;
+        return {
+            price: obLevel,
+            condition: `Aguardar teste do Order Block em ${obLevel.toFixed(4)}. Entrada na rejeição com candle de reversão.`,
+            type: 'CANDLE_CLOSE',
+        };
+    }
+    
+    // 5. RSI divergence confirmation
+    if (indicators.rsiDivergence) {
+        return {
+            price: entry,
+            condition: `Divergência ${indicators.rsiDivergence} detectada. Aguardar candle de confirmação (engolfo/pinbar).`,
+            type: 'PATTERN_COMPLETE',
+        };
+    }
+    
+    // 6. Generic - need more confluence
+    const nearestLevel = isLong ? levels.support[0] : levels.resistance[0];
+    return {
+        price: nearestLevel,
+        condition: `Preço atual em zona neutra. Aguardar aproximação de ${nearestLevel.toFixed(4)} ou rompimento de estrutura.`,
+        type: 'PRICE_BREAK',
+    };
+}
+
 // Generate recommendation
-function generateRecommendation(setups: Setup[]): {
+function generateRecommendation(setups: Setup[], technical?: TechnicalAnalysis): {
     action: 'EXECUTE' | 'WAIT' | 'AVOID';
     reason: string;
     bestSetup: Setup | null;
+    trigger?: SetupTrigger;
+    metrics?: NonNullable<MicroAnalysis['recommendation']['metrics']>;
 } {
     if (setups.length === 0) {
         return {
@@ -741,36 +925,224 @@ function generateRecommendation(setups: Setup[]): {
     // Sort by technical score
     const sorted = [...setups].sort((a, b) => b.technicalScore - a.technicalScore);
     const best = sorted[0];
+
+    const clamp = (x: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, x));
+
+    const estimateRecommendationMetrics = (): NonNullable<MicroAnalysis['recommendation']['metrics']> => {
+        let pWin = 0.45;
+
+        pWin += clamp((best.technicalScore - 50) * 0.003, -0.18, 0.18);
+
+        if (best.confidence === 'HIGH') pWin += 0.08;
+        else if (best.confidence === 'MEDIUM') pWin += 0.03;
+        else pWin -= 0.05;
+
+        pWin += clamp((best.confluences.length - 2) * 0.02, -0.06, 0.08);
+
+        const hasRegime = best.confluences.some(c => c.startsWith('Regime:'));
+        if (hasRegime) pWin += 0.02;
+
+        const hasOB = best.confluences.some(c => c.toLowerCase().includes('order block'));
+        if (hasOB) pWin += 0.02;
+
+        const hasLiquidityTarget = best.confluences.some(c => c.toLowerCase().includes('liquidity'));
+        if (hasLiquidityTarget) pWin += 0.01;
+
+        pWin = clamp(pWin, 0.25, 0.78);
+
+        let modelRisk: 'LOW' | 'MED' | 'HIGH' = 'MED';
+        if (best.confidence === 'HIGH' && best.confluences.length >= 3) modelRisk = 'LOW';
+        if (best.confidence === 'LOW' || best.confluences.length <= 1) modelRisk = 'HIGH';
+
+        const rrBreakeven = (1 - pWin) / pWin;
+        const buffer = modelRisk === 'LOW' ? 0.15 : modelRisk === 'MED' ? 0.30 : 0.50;
+        const rrMin = clamp(rrBreakeven * (1 + buffer), 1.05, 4.0);
+
+        const rr = Number.isFinite(best.riskReward) ? best.riskReward : 0;
+        const evR = (pWin * rr) - (1 - pWin);
+
+        return { pWin, rrMin, evR, modelRisk };
+    };
+
+    const metrics = estimateRecommendationMetrics();
+
+    // Helper to build trigger when technical data available
+    const buildTrigger = (): SetupTrigger | undefined => {
+        if (technical && best) return calculateTrigger(best, technical);
+        return undefined;
+    };
+
+    if (!Number.isFinite(best.riskReward) || best.riskReward <= 0) {
+        return {
+            action: 'WAIT',
+            reason: 'R:R inválido para decisão (dados insuficientes).',
+            bestSetup: best,
+            trigger: buildTrigger(),
+            metrics,
+        };
+    }
+
+    if (best.riskReward < metrics.rrMin) {
+        const action = metrics.evR < 0 ? 'AVOID' : 'WAIT';
+        return {
+            action,
+            reason: `R:R abaixo do mínimo dinâmico. Min ${metrics.rrMin.toFixed(2)} (pWin ${(metrics.pWin * 100).toFixed(0)}%, EV ${metrics.evR.toFixed(2)}R). Atual ${best.riskReward.toFixed(2)}.`,
+            bestSetup: best,
+            trigger: action === 'WAIT' ? buildTrigger() : undefined,
+            metrics,
+        };
+    }
+
+    const minExecuteEV = metrics.modelRisk === 'LOW' ? 0.10 : metrics.modelRisk === 'MED' ? 0.15 : 0.25;
+    if (metrics.evR < minExecuteEV) {
+        return {
+            action: 'WAIT',
+            reason: `EV abaixo do mínimo para execução. EV ${metrics.evR.toFixed(2)}R (min ${minExecuteEV.toFixed(2)}R).`,
+            bestSetup: best,
+            trigger: buildTrigger(),
+            metrics,
+        };
+    }
     
     // EXECUTE if: HIGH confidence OR (MEDIUM with 3+ confluences)
     if (best.confidence === 'HIGH' || (best.confidence === 'MEDIUM' && best.confluences.length >= 3)) {
         return {
             action: 'EXECUTE',
-            reason: `${best.confidence} confidence ${best.type} setup. ${best.confluences.length} confluences. R:R ${best.riskReward.toFixed(1)}.`,
+            reason: `${best.confidence} confidence ${best.type} setup. ${best.confluences.length} confluences. R:R ${best.riskReward.toFixed(1)} (min ${metrics.rrMin.toFixed(2)}, EV ${metrics.evR.toFixed(2)}R).`,
             bestSetup: best,
+            metrics,
         };
     }
     
     if (best.confidence === 'MEDIUM') {
         return {
             action: 'WAIT',
-            reason: `Medium confidence, ${best.confluences.length} confluences. Await more confirmation.`,
+            reason: `Medium confidence, ${best.confluences.length} confluences. EV ${metrics.evR.toFixed(2)}R. Await more confirmation.`,
             bestSetup: best,
+            trigger: buildTrigger(),
+            metrics,
         };
     }
     
     return {
         action: 'AVOID',
-        reason: `Low confidence. Risk not justified.`,
+        reason: `Low confidence. EV ${metrics.evR.toFixed(2)}R. Risk not justified.`,
         bestSetup: best,
+        metrics,
     };
 }
 
-export async function GET() {
+export async function GET(request: Request) {
     try {
+        const { searchParams } = new URL(request.url);
+        const symbolOverride = searchParams.get('symbol');
+        const directionOverride = searchParams.get('direction');
+
         // 1. Fetch MESO inputs with full context
         const mesoData = await fetchMesoInputs();
         const { instruments, prohibited, context } = mesoData;
+
+        if (symbolOverride) {
+            const mtf = await fetchMTFSnapshot(symbolOverride);
+            const directionFromMtf: MesoInput['direction'] = mtf?.bias === 'SHORT' ? 'SHORT' : 'LONG';
+            const direction: MesoInput['direction'] = (directionOverride === 'SHORT' || directionOverride === 'LONG')
+                ? (directionOverride as MesoInput['direction'])
+                : directionFromMtf;
+
+            const marketData = await fetchMarketData([symbolOverride]);
+            const data = marketData.get(symbolOverride) || Array.from(marketData.entries())[0]?.[1];
+            if (!data) {
+                return NextResponse.json({
+                    success: true,
+                    timestamp: new Date().toISOString(),
+                    analyses: [],
+                    mesoContext: context,
+                    summary: {
+                        total: 0,
+                        withSetups: 0,
+                        executeReady: 0,
+                        regime: context.regime,
+                        bias: context.bias,
+                        message: `Symbol ${symbolOverride}: sem dados de mercado.`,
+                    },
+                    prohibited,
+                });
+            }
+
+            const technical = generateTechnicalAnalysis(symbolOverride, data, mtf);
+            const adaptiveContext: AdaptiveContext = {
+                regime: context.regime,
+                volatilityContext: (context.volatilityContext as 'HIGH' | 'NORMAL' | 'LOW') || 'NORMAL',
+                classExpectation: 'NEUTRAL',
+                classConfidence: 'MEDIUM',
+                liquidityScore: 50,
+            };
+
+            const { setup, scenarioAnalysis, levelSources } = generateSetups(
+                symbolOverride,
+                symbolOverride,
+                data.price,
+                technical,
+                direction,
+                'LAB override',
+                adaptiveContext
+            );
+
+            const setups: Setup[] = setup ? [setup] : [];
+
+            let recommendation: MicroAnalysis['recommendation'];
+            if (scenarioAnalysis.status === 'CONTRA') {
+                recommendation = { action: 'AVOID', reason: scenarioAnalysis.statusReason, bestSetup: null };
+            } else if (scenarioAnalysis.status === 'DESENVOLVENDO') {
+                const base = generateRecommendation(setups, technical);
+                recommendation = {
+                    action: 'WAIT',
+                    reason: `${scenarioAnalysis.statusReason} | ${base.reason}`,
+                    bestSetup: base.bestSetup,
+                    trigger: base.trigger,
+                    metrics: base.metrics,
+                };
+            } else {
+                const base = generateRecommendation(setups, technical);
+                recommendation = {
+                    action: base.action,
+                    reason: `${scenarioAnalysis.statusReason} Timing: ${scenarioAnalysis.timing}. Qualidade: ${scenarioAnalysis.entryQuality}. | ${base.reason}`,
+                    bestSetup: base.bestSetup,
+                    trigger: base.trigger,
+                    metrics: base.metrics,
+                };
+            }
+
+            const analysis: MicroAnalysis = {
+                symbol: symbolOverride,
+                displaySymbol: symbolOverride.replace('=X', '').replace('-USD', '').replace('=F', ''),
+                name: data.name,
+                assetClass: data.assetClass,
+                price: data.price,
+                technical,
+                setups,
+                recommendation,
+                scenarioAnalysis,
+                levelSources: levelSources || [],
+                adaptiveContext,
+            };
+
+            return NextResponse.json({
+                success: true,
+                timestamp: new Date().toISOString(),
+                analyses: [analysis],
+                mesoContext: context,
+                summary: {
+                    total: 1,
+                    withSetups: setups.length,
+                    executeReady: recommendation.action === 'EXECUTE' ? 1 : 0,
+                    regime: context.regime,
+                    bias: context.bias,
+                    message: `LAB: ${symbolOverride} (${direction})`,
+                },
+                prohibited,
+            });
+        }
         
         // 2. Filter to only real instruments (not placeholders)
         const realInstruments = instruments.filter((i: MesoInput) => 
@@ -805,6 +1177,14 @@ export async function GET() {
         
         // 4. Generate technical analysis for MESO-approved instruments only
         const analyses: MicroAnalysis[] = [];
+
+        const mtfBySymbol = new Map<string, MTFSnapshot | null>();
+        const mtfSnapshots = await mapWithConcurrency(
+            realInstruments,
+            4,
+            async (i: MesoInput) => ({ symbol: i.symbol, mtf: await fetchMTFSnapshot(i.symbol) })
+        );
+        for (const s of mtfSnapshots) mtfBySymbol.set(s.symbol, s.mtf);
         
         for (const input of realInstruments) {
             // Check if symbol is prohibited
@@ -814,8 +1194,8 @@ export async function GET() {
                 Array.from(marketData.entries()).find(([k]) => k.includes(input.symbol) || input.symbol.includes(k))?.[1];
             
             if (!data) continue;
-            
-            const technical = generateTechnicalAnalysis(input.symbol, data);
+
+            const technical = generateTechnicalAnalysis(input.symbol, data, mtfBySymbol.get(input.symbol));
             
             // Build adaptive context from MACRO/MESO
             const classInfo = context.classAnalysis?.[input.class] as { expectation?: string; confidence?: string; liquidityScore?: number } | undefined;
@@ -841,31 +1221,39 @@ export async function GET() {
             // Build setups array (may be empty if scenario is CONTRA)
             const setups: Setup[] = setup ? [setup] : [];
             
-            // Generate recommendation based on scenario status
-            let recommendation;
-            if (scenarioAnalysis.status === 'PRONTO' && setup) {
+            // Generate recommendation based on scenario status + setup quality (RR/confluences)
+            let recommendation: MicroAnalysis['recommendation'];
+            if (scenarioAnalysis.status === 'CONTRA') {
                 recommendation = {
-                    action: 'EXECUTE' as const,
-                    reason: `${scenarioAnalysis.statusReason} Timing: ${scenarioAnalysis.timing}. Qualidade: ${scenarioAnalysis.entryQuality}.`,
-                    bestSetup: setup,
-                };
-            } else if (scenarioAnalysis.status === 'DESENVOLVENDO') {
-                recommendation = {
-                    action: 'WAIT' as const,
-                    reason: scenarioAnalysis.statusReason,
-                    bestSetup: setup,
-                };
-            } else {
-                recommendation = {
-                    action: 'AVOID' as const,
+                    action: 'AVOID',
                     reason: scenarioAnalysis.statusReason,
                     bestSetup: null,
                 };
+            } else if (scenarioAnalysis.status === 'DESENVOLVENDO') {
+                const base = generateRecommendation(setups, technical);
+                recommendation = {
+                    action: 'WAIT',
+                    reason: `${scenarioAnalysis.statusReason} | ${base.reason}`,
+                    bestSetup: base.bestSetup,
+                    trigger: base.trigger,
+                    metrics: base.metrics,
+                };
+            } else {
+                const base = generateRecommendation(setups, technical);
+                recommendation = {
+                    action: base.action,
+                    reason: `${scenarioAnalysis.statusReason} Timing: ${scenarioAnalysis.timing}. Qualidade: ${scenarioAnalysis.entryQuality}. | ${base.reason}`,
+                    bestSetup: base.bestSetup,
+                    trigger: base.trigger,
+                    metrics: base.metrics,
+                };
             }
-            
-            analyses.push({
+
+            const analysis: MicroAnalysis = {
                 symbol: input.symbol,
                 displaySymbol: input.symbol.replace('=X', '').replace('-USD', '').replace('=F', ''),
+                name: data.name,
+                assetClass: data.assetClass,
                 price: data.price,
                 technical,
                 setups,
@@ -873,20 +1261,20 @@ export async function GET() {
                 scenarioAnalysis,
                 levelSources: levelSources || [],
                 adaptiveContext,
-            });
+            };
+            analyses.push(analysis);
         }
-        
-        // 5. Sort by MESO score first, then by technical score
+
         analyses.sort((a, b) => {
-            const order = { EXECUTE: 0, WAIT: 1, AVOID: 2 };
-            const orderDiff = order[a.recommendation.action] - order[b.recommendation.action];
+            const order = (x: MicroAnalysis['recommendation']['action']) => x === 'EXECUTE' ? 0 : x === 'WAIT' ? 1 : 2;
+            const orderDiff = order(a.recommendation.action) - order(b.recommendation.action);
             if (orderDiff !== 0) return orderDiff;
             return (b.recommendation.bestSetup?.technicalScore || 0) - (a.recommendation.bestSetup?.technicalScore || 0);
         });
-        
+
         const executeReady = analyses.filter(a => a.recommendation.action === 'EXECUTE').length;
         const withSetups = analyses.filter(a => a.setups.length > 0).length;
-        
+
         return NextResponse.json({
             success: true,
             timestamp: new Date().toISOString(),
@@ -898,9 +1286,9 @@ export async function GET() {
                 executeReady,
                 regime: context.regime,
                 bias: context.bias,
-                message: executeReady > 0 
+                message: executeReady > 0
                     ? `${executeReady} setup(s) MESO-validado(s) prontos (Regime: ${context.regime})`
-                    : withSetups > 0 
+                    : withSetups > 0
                         ? `${withSetups} setup(s) identificados, aguardando confirmação técnica`
                         : `Regime ${context.regime}: Nenhum setup de alta convicção no momento`,
             },
@@ -908,7 +1296,7 @@ export async function GET() {
             mesoInstruments: realInstruments.slice(0, 10),
         });
     } catch (error) {
-        console.error('Micro API error:', error);
+        serverLog('error', 'micro_api_error', { error: String(error) }, 'api/micro');
         return NextResponse.json({
             success: false,
             error: error instanceof Error ? error.message : 'Unknown error',

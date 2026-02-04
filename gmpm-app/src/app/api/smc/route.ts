@@ -3,6 +3,25 @@
 
 import { NextResponse } from 'next/server';
 import { analyzeSMC, Candle } from '@/lib/smcEngine';
+import { yahooFetchJson } from '@/lib/yahooClient';
+import { serverLog } from '@/lib/serverLogs';
+
+type YahooChartResponse = {
+    chart?: {
+        result?: Array<{
+            timestamp?: number[];
+            indicators?: {
+                quote?: Array<{
+                    open?: Array<number | null>;
+                    high?: Array<number | null>;
+                    low?: Array<number | null>;
+                    close?: Array<number | null>;
+                    volume?: Array<number | null>;
+                }>;
+            };
+        }>;
+    };
+};
 
 async function fetchCandles(symbol: string, interval: string = '1d'): Promise<Candle[]> {
     try {
@@ -12,32 +31,44 @@ async function fetchCandles(symbol: string, interval: string = '1d'): Promise<Ca
 
         const url = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?period1=${period1}&period2=${period2}&interval=${interval}`;
 
-        const response = await fetch(url, {
-            headers: { 'User-Agent': 'Mozilla/5.0' },
-            next: { revalidate: 300 },
-        });
+        const y = await yahooFetchJson(url, 300_000);
+        if (!y.ok || !y.data) {
+            serverLog('warn', 'smc_yahoo_fetch_failed', { symbol, interval, status: y.status, cached: y.cached, stale: y.stale }, 'api/smc');
+            return [];
+        }
 
-        if (!response.ok) return [];
-
-        const data = await response.json();
+        const data = y.data as YahooChartResponse;
         const result = data.chart?.result?.[0];
 
         if (!result) return [];
 
         const timestamps = result.timestamp || [];
-        const quotes = result.indicators?.quote?.[0] || {};
+        const quote = result.indicators?.quote?.[0];
+        if (!quote) return [];
+
+        const open = quote.open || [];
+        const high = quote.high || [];
+        const low = quote.low || [];
+        const close = quote.close || [];
+        const volume = quote.volume || [];
+
+        const coalesceNum = (v: number | null | undefined, fallback: number) => (v == null ? fallback : v);
+        const coalesceVol = (v: number | null | undefined) => (v == null ? 0 : v);
 
         const candles: Candle[] = [];
 
         for (let i = 0; i < timestamps.length; i++) {
-            if (quotes.close?.[i] != null) {
+            const c = close[i];
+            if (c != null) {
+                const o0 = open[i];
+                const o = o0 != null ? o0 : c;
                 candles.push({
                     time: timestamps[i] * 1000,
-                    open: quotes.open?.[i] || 0,
-                    high: quotes.high?.[i] || 0,
-                    low: quotes.low?.[i] || 0,
-                    close: quotes.close?.[i] || 0,
-                    volume: quotes.volume?.[i] || 0,
+                    open: o,
+                    high: coalesceNum(high[i], o),
+                    low: coalesceNum(low[i], o),
+                    close: c,
+                    volume: coalesceVol(volume[i]),
                 });
             }
         }
@@ -119,7 +150,7 @@ export async function GET(request: Request) {
             },
         });
     } catch (error) {
-        console.error('SMC API Error:', error);
+        serverLog('error', 'smc_api_error', { error: String(error) }, 'api/smc');
         return NextResponse.json(
             { success: false, error: 'Failed to analyze SMC' },
             { status: 500 }

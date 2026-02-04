@@ -3,7 +3,7 @@
 import React, { useState } from 'react';
 import { useStore } from '@/store/useStore';
 import {
-    Zap, ArrowRight, Play, CheckCircle2, XCircle,
+    Zap, ArrowRight, Play, CheckCircle2,
     BarChart3, Brain, Globe, Shield, AlertTriangle
 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';

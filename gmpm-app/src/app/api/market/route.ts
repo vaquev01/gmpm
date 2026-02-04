@@ -3,6 +3,7 @@
 
 import { NextResponse } from 'next/server';
 import { serverLog } from '@/lib/serverLogs';
+import { yahooFetchJson } from '@/lib/yahooClient';
 
 type QuoteQualityStatus = 'OK' | 'PARTIAL' | 'STALE' | 'SUSPECT';
 
@@ -16,6 +17,16 @@ let lastGoodSnapshot: {
     payload: unknown;
     timestamp: string;
 } | null = null;
+
+type MarketCacheEntry = {
+    ts: number;
+    payload: unknown;
+};
+
+const marketCache = new Map<string, MarketCacheEntry>();
+const marketCacheInFlight = new Map<string, Promise<{ status: number; payload: unknown; cacheable: boolean }>>();
+const MARKET_CACHE_TTL_MS = 60_000;
+const MARKET_CACHE_STALE_MS = 5 * 60_000;
 
 function summarizeQuality(quotes: QuoteData[]) {
     const summary = quotes.reduce(
@@ -220,13 +231,58 @@ interface MacroData {
     fearGreed: FearGreedData | null;
 }
 
+type YahooMeta = {
+    regularMarketPrice?: number;
+    previousClose?: number;
+    regularMarketTime?: number;
+    regularMarketDayHigh?: number;
+    regularMarketDayLow?: number;
+    regularMarketOpen?: number;
+    regularMarketVolume?: number;
+    marketState?: string;
+    shortName?: string;
+    longName?: string;
+};
+
+type YahooQuote = {
+    open?: Array<number | null>;
+    high?: Array<number | null>;
+    low?: Array<number | null>;
+    close?: Array<number | null>;
+    volume?: Array<number | null>;
+};
+
+type YahooChartResponse = {
+    chart?: {
+        result?: Array<{
+            meta?: YahooMeta;
+            timestamp?: number[];
+            indicators?: {
+                quote?: YahooQuote[];
+            };
+        }>;
+    };
+};
+
+type NextFetchInit = RequestInit & { next?: { revalidate?: number } };
+
+async function fetchWithTimeout(input: string, init: NextFetchInit, timeoutMs: number) {
+    const controller = new AbortController();
+    const t = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+        return await fetch(input, { ...init, signal: controller.signal });
+    } finally {
+        clearTimeout(t);
+    }
+}
+
 async function fetchFredLatest(seriesId: string): Promise<number | null> {
     const apiKey = process.env.FRED_API_KEY;
     if (!apiKey) return null;
 
     try {
         const url = `https://api.stlouisfed.org/fred/series/observations?series_id=${encodeURIComponent(seriesId)}&api_key=${encodeURIComponent(apiKey)}&file_type=json&sort_order=desc&limit=1`;
-        const res = await fetch(url, { next: { revalidate: 300 } });
+        const res = await fetchWithTimeout(url, { next: { revalidate: 300 } }, 4500);
         if (!res.ok) return null;
 
         const json = await res.json();
@@ -243,28 +299,24 @@ async function fetchYahooQuote(symbol: string): Promise<QuoteData | null> {
     try {
         const url = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1d&range=30d`;
 
-        const response = await fetch(url, {
-            headers: { 'User-Agent': 'Mozilla/5.0' },
-            next: { revalidate: 10 },
-        });
+        const y = await yahooFetchJson(url, 60_000, 7000);
+        if (!y.ok || !y.data) return null;
 
-        if (!response.ok) return null;
-
-        const data = await response.json();
+        const data = y.data as YahooChartResponse;
         const result = data.chart?.result?.[0];
         if (!result) return null;
 
-        const meta = result.meta;
+        const meta: YahooMeta = result.meta || {};
         const quotes = result.indicators?.quote?.[0];
         if (!quotes?.close) return null;
 
-        const closes = quotes.close.filter((c: number | null) => c !== null);
-        const highs = quotes.high.filter((h: number | null) => h !== null);
-        const lows = quotes.low.filter((l: number | null) => l !== null);
+        const closes = (quotes.close || []).filter((c): c is number => c !== null);
+        const highs = (quotes.high || []).filter((h): h is number => h !== null);
+        const lows = (quotes.low || []).filter((l): l is number => l !== null);
         // Safely handle volumes, some assets might calculate them differently or be null
-        const volumes = quotes.volume?.filter((v: number | null) => v !== null) || [];
+        const volumes = (quotes.volume || []).filter((v): v is number => v !== null);
 
-        const currentPriceRaw = closes[closes.length - 1] || meta.regularMarketPrice;
+        const currentPriceRaw = closes[closes.length - 1] || meta.regularMarketPrice || 0;
         const previousCloseRaw = meta.previousClose || closes[closes.length - 2] || currentPriceRaw;
 
         // Yahoo treasury yield tickers are often scaled by 10 (e.g. ^TNX=42.5 => 4.25%),
@@ -317,7 +369,7 @@ async function fetchYahooQuote(symbol: string): Promise<QuoteData | null> {
         }
 
         const history = closes.slice(-20).map((c: number) => c / scale);
-        const quoteTimestamp = (meta && typeof meta.regularMarketTime === 'number')
+        const quoteTimestamp = (typeof meta.regularMarketTime === 'number')
             ? new Date(meta.regularMarketTime * 1000).toISOString()
             : undefined;
 
@@ -331,7 +383,7 @@ async function fetchYahooQuote(symbol: string): Promise<QuoteData | null> {
         else if (ASSETS.bonds.includes(symbol)) assetClass = 'bond';
 
         const sessionBound = assetClass === 'stock' || assetClass === 'etf' || assetClass === 'index' || assetClass === 'bond';
-        const marketState = (meta?.marketState ? String(meta.marketState) : '').toUpperCase();
+        const marketState = (meta.marketState ? String(meta.marketState) : '').toUpperCase();
 
         let ageMin: number | undefined;
         if (quoteTimestamp) {
@@ -343,12 +395,12 @@ async function fetchYahooQuote(symbol: string): Promise<QuoteData | null> {
         if (!Number.isFinite(currentPrice) || currentPrice <= 0) reasons.push('BAD_PRICE');
         if (!Number.isFinite(previousClose) || previousClose <= 0) reasons.push('BAD_PREV_CLOSE');
         if (!Number.isFinite(changePercent)) reasons.push('BAD_CHANGE');
-        if (!Number.isFinite((meta?.regularMarketDayHigh || 0)) || !Number.isFinite((meta?.regularMarketDayLow || 0))) reasons.push('BAD_HILO');
+        if (!Number.isFinite((meta.regularMarketDayHigh || 0)) || !Number.isFinite((meta.regularMarketDayLow || 0))) reasons.push('BAD_HILO');
         if (history.length < 8) reasons.push('SHORT_HISTORY');
         if (!quoteTimestamp) reasons.push('NO_QUOTE_TIMESTAMP');
 
-        const dayHigh = (meta?.regularMarketDayHigh || currentPriceRaw) / scale;
-        const dayLow = (meta?.regularMarketDayLow || currentPriceRaw) / scale;
+        const dayHigh = (meta.regularMarketDayHigh || currentPriceRaw) / scale;
+        const dayLow = (meta.regularMarketDayLow || currentPriceRaw) / scale;
         if (Number.isFinite(dayHigh) && Number.isFinite(dayLow) && dayHigh > 0 && dayLow > 0) {
             if (dayHigh < dayLow) reasons.push('INVALID_RANGE');
             // Price should typically lie within [low, high], allow small tolerance.
@@ -413,9 +465,11 @@ async function fetchYahooQuote(symbol: string): Promise<QuoteData | null> {
 // ===== FEAR & GREED INDEX =====
 async function fetchFearGreed(): Promise<FearGreedData | null> {
     try {
-        const response = await fetch('https://api.alternative.me/fng/?limit=1', {
-            next: { revalidate: 3600 },
-        });
+        const response = await fetchWithTimeout(
+            'https://api.alternative.me/fng/?limit=1',
+            { next: { revalidate: 3600 } },
+            3500
+        );
         if (!response.ok) return null;
 
         const data = await response.json();
@@ -438,8 +492,64 @@ export async function GET(request: Request) {
     const limit = parseInt(searchParams.get('limit') || '0', 10);
     const assetClass = searchParams.get('class');
     const category = searchParams.get('category');
+    const symbolsParam = searchParams.get('symbols');
+    const macroParam = searchParams.get('macro');
+    const includeMacro = macroParam === '1' || macroParam === 'true';
 
-    const macroSymbols = ['^VIX', '^TNX', '^TYX', '^FVX', 'DX=F'];
+    const cacheKey = JSON.stringify({ limit, assetClass, category, symbolsParam, includeMacro });
+    const cached = marketCache.get(cacheKey);
+    const now = Date.now();
+    if (cached && (now - cached.ts) < MARKET_CACHE_TTL_MS) {
+        const payload = cached.payload as Record<string, unknown>;
+        return NextResponse.json({
+            ...payload,
+            cached: true,
+            cacheAge: now - cached.ts,
+            cacheMode: 'HIT',
+        });
+    }
+
+    if (cached && (now - cached.ts) < MARKET_CACHE_STALE_MS) {
+        if (!marketCacheInFlight.has(cacheKey)) {
+            const inFlight = (async () => {
+                const res = await buildSnapshot();
+                if (res.cacheable) {
+                    marketCache.set(cacheKey, { ts: Date.now(), payload: res.payload });
+                }
+                return res;
+            })()
+                .finally(() => {
+                    marketCacheInFlight.delete(cacheKey);
+                });
+            marketCacheInFlight.set(cacheKey, inFlight);
+        }
+
+        const payload = cached.payload as Record<string, unknown>;
+        return NextResponse.json({
+            ...payload,
+            cached: true,
+            cacheAge: now - cached.ts,
+            cacheMode: 'STALE',
+        });
+    }
+
+    const existing = marketCacheInFlight.get(cacheKey);
+    if (existing) {
+        try {
+            const res = await existing;
+            return NextResponse.json(
+                {
+                    ...(res.payload as Record<string, unknown>),
+                    cached: true,
+                    cacheAge: 0,
+                    cacheMode: 'INFLIGHT',
+                },
+                { status: res.status }
+            );
+        } catch {
+            // ignore and rebuild
+        }
+    }
 
     const CLASS_TO_CATEGORY: Record<string, keyof typeof ASSETS> = {
         stock: 'stocks',
@@ -451,32 +561,41 @@ export async function GET(request: Request) {
         bond: 'bonds',
     };
 
-    try {
+    async function buildSnapshot(): Promise<{ status: number; payload: unknown; cacheable: boolean }> {
+        const macroSymbols = includeMacro ? ['^VIX', '^TNX', '^TYX', '^FVX', 'DX=F'] : [];
+
         let symbolsToFetch = ALL_SYMBOLS;
 
-        if (category && category in ASSETS) {
+        if (symbolsParam && symbolsParam.trim().length > 0) {
+            const requested = symbolsParam
+                .split(',')
+                .map((s) => s.trim())
+                .filter(Boolean);
+            if (requested.length > 0) {
+                symbolsToFetch = requested;
+            }
+        }
+
+        if (!symbolsParam && category && category in ASSETS) {
             symbolsToFetch = ASSETS[category as keyof typeof ASSETS];
-        } else if (assetClass && assetClass in CLASS_TO_CATEGORY) {
+        } else if (!symbolsParam && assetClass && assetClass in CLASS_TO_CATEGORY) {
             const mapped = CLASS_TO_CATEGORY[assetClass];
             symbolsToFetch = ASSETS[mapped];
         }
 
-        if (limit > 0) {
+        if (!symbolsParam && limit > 0) {
             symbolsToFetch = symbolsToFetch.slice(0, limit);
         }
 
         // Always include core macro context symbols even when limit/category is used
-        symbolsToFetch = Array.from(new Set([...symbolsToFetch, ...macroSymbols]));
-
-        // Fetch in batches
-        const batchSize = 20;
-        const allQuotes: QuoteData[] = [];
-
-        for (let i = 0; i < symbolsToFetch.length; i += batchSize) {
-            const batch = symbolsToFetch.slice(i, i + batchSize);
-            const results = await Promise.all(batch.map(fetchYahooQuote));
-            allQuotes.push(...results.filter((q): q is QuoteData => q !== null));
+        if (macroSymbols.length > 0) {
+            symbolsToFetch = Array.from(new Set([...symbolsToFetch, ...macroSymbols]));
         }
+
+        // Fetch all symbols and rely on yahooClient's concurrency queue.
+        // This avoids slow outliers stalling an entire batch.
+        const results = await Promise.all(symbolsToFetch.map(fetchYahooQuote));
+        const allQuotes: QuoteData[] = results.filter((q): q is QuoteData => q !== null);
 
         const requestedCount = symbolsToFetch.length;
         const coverage = requestedCount > 0 ? (allQuotes.length / requestedCount) : 0;
@@ -548,19 +667,24 @@ export async function GET(request: Request) {
         const treas30y = allQuotes.find(q => q.symbol === '^TYX');
         const treas5y = allQuotes.find(q => q.symbol === '^FVX');
         const dxy = allQuotes.find(q => q.symbol === 'DX=F');
-        const fearGreed = await fetchFearGreed();
+        let fearGreed: FearGreedData | null = null;
+        let treasury10y = treas10y?.price || 0;
+        let treasury2y = treas5y?.price || 0;
+        let yieldCurve = (treas10y?.price && treas5y?.price) ? (treas10y.price - treas5y.price) : 0;
 
-        // Prefer real FRED yields when available (more accurate than Yahoo proxies)
-        const [fred10y, fred2y] = await Promise.all([
-            fetchFredLatest('DGS10'),
-            fetchFredLatest('DGS2'),
-        ]);
+        if (includeMacro) {
+            fearGreed = await fetchFearGreed();
 
-        const treasury10y = (fred10y !== null) ? fred10y : (treas10y?.price || 0);
-        const treasury2y = (fred2y !== null) ? fred2y : (treas5y?.price || 0);
-        let yieldCurve = 0;
-        if (fred10y !== null && fred2y !== null) yieldCurve = fred10y - fred2y;
-        else if (treas10y?.price && treas5y?.price) yieldCurve = treas10y.price - treas5y.price;
+            // Prefer real FRED yields when available (more accurate than Yahoo proxies)
+            const [fred10y, fred2y] = await Promise.all([
+                fetchFredLatest('DGS10'),
+                fetchFredLatest('DGS2'),
+            ]);
+
+            treasury10y = (fred10y !== null) ? fred10y : treasury10y;
+            treasury2y = (fred2y !== null) ? fred2y : treasury2y;
+            if (fred10y !== null && fred2y !== null) yieldCurve = fred10y - fred2y;
+        }
 
         const macro: MacroData = {
             vix: vixQuote?.price || 0,
@@ -634,7 +758,10 @@ export async function GET(request: Request) {
         if (degraded && lastGoodSnapshot) {
             serverLog('warn', 'market_snapshot_fallback', { reason: 'DEGRADED_FALLBACK', requestedCount, count: allQuotes.length, coverage }, 'api/market');
             const last = lastGoodSnapshot.payload as Record<string, unknown>;
-            return NextResponse.json({
+            return {
+                status: 200,
+                cacheable: true,
+                payload: {
                 ...last,
                 degraded: true,
                 tradeEnabled: false,
@@ -643,33 +770,57 @@ export async function GET(request: Request) {
                 tradeDisabledReasonByClass: {},
                 fallback: true,
                 fallbackTimestamp: lastGoodSnapshot.timestamp,
-            });
+                },
+            };
         }
 
-        return NextResponse.json(payload);
-    } catch (error) {
-        console.error('API Error:', error);
+        return { status: 200, payload, cacheable: true };
+    }
 
-        serverLog('error', 'market_snapshot_error', error, 'api/market');
+    const inFlight = (async () => {
+        try {
+            return await buildSnapshot();
+        } catch (error) {
+        serverLog('error', 'market_api_error', { error: String(error) }, 'api/market');
 
         if (lastGoodSnapshot) {
-            serverLog('warn', 'market_snapshot_fallback', { reason: 'ERROR_FALLBACK' }, 'api/market');
+            serverLog('warn', 'market_snapshot_degraded', { error: String(error) }, 'api/market');
             const last = lastGoodSnapshot.payload as Record<string, unknown>;
-            return NextResponse.json({
+            return {
+                status: 200,
+                cacheable: true,
+                payload: {
                 ...last,
                 degraded: true,
                 tradeEnabled: false,
-                tradeDisabledReason: 'ERROR_FALLBACK',
+                tradeDisabledReason: 'DEGRADED_FALLBACK',
                 tradeEnabledByClass: {},
                 tradeDisabledReasonByClass: {},
                 fallback: true,
                 fallbackTimestamp: lastGoodSnapshot.timestamp,
-            });
+                },
+            };
         }
 
-        return NextResponse.json(
-            { success: false, error: 'Failed to fetch market data' },
-            { status: 500 }
-        );
+            return { status: 500, payload: { success: false, error: 'Failed to fetch market data' }, cacheable: false };
+        }
+    })()
+        .finally(() => {
+            marketCacheInFlight.delete(cacheKey);
+        });
+
+    marketCacheInFlight.set(cacheKey, inFlight);
+    const res = await inFlight;
+
+    if (res.cacheable) {
+        marketCache.set(cacheKey, { ts: Date.now(), payload: res.payload });
     }
+
+    return NextResponse.json(
+        {
+            ...(res.payload as Record<string, unknown>),
+            cacheMode: 'MISS',
+        },
+        { status: res.status }
+    );
 }

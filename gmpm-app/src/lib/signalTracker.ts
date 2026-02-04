@@ -282,7 +282,7 @@ export async function updateSignalPrices(): Promise<TrackedSignal[]> {
     const priceMap: Record<string, number> = {};
 
     try {
-        const response = await fetch('/api/market');
+        const response = await fetch('/api/market?macro=0');
         if (response.ok) {
             const data = await response.json();
             for (const quote of data.data || []) {

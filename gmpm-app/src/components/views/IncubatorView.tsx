@@ -1,11 +1,11 @@
 
 import React, { useState, useEffect } from 'react';
 import { useStore } from '@/store/useStore';
-import { IncubatorPortfolio, TrackedAsset } from '@/types';
+import { IncubatorPortfolio } from '@/types';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Trash2, TrendingUp, TrendingDown, Settings, DollarSign, Wallet, Shield, Zap, Target, AlertTriangle, CheckCircle, Clock } from 'lucide-react';
+import { Trash2, Settings, DollarSign, Wallet, Shield, Zap, Target, AlertTriangle, CheckCircle, Clock } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import {
     Dialog,
@@ -107,7 +107,7 @@ export const IncubatorView = () => {
             // For now, let's assume we can fetch or use what's in store.
             // If store doesn't persist full marketData, we do a lightweight fetch here.
             try {
-                const res = await fetch('/api/market?limit=280');
+                const res = await fetch('/api/market?limit=280&macro=0');
                 const data = await res.json();
                 if (data.success && data.data) {
                     const priceMap: Record<string, number> = {};
@@ -182,6 +182,9 @@ export const IncubatorView = () => {
                     {portfolios.map(portfolio => {
                         const pnl = calculatePortfolioPnL(portfolio);
                         const isProfit = pnl >= 0;
+                        const avgFinal = portfolio.assets.length > 0
+                            ? Math.round(portfolio.assets.reduce((sum, a) => sum + (a.finalScore ?? a.technicalScore ?? 50), 0) / portfolio.assets.length)
+                            : 0;
 
                         return (
                             <Card key={portfolio.id} className="bg-gray-900 border-gray-800 hover:border-gray-700 transition-all flex flex-col">
@@ -192,6 +195,14 @@ export const IncubatorView = () => {
                                                 {portfolio.name}
                                                 <span className="text-[10px] bg-gray-800 px-2 py-0.5 rounded text-gray-400 font-normal">
                                                     {new Date(portfolio.createdAt).toLocaleDateString()}
+                                                </span>
+                                                <span className={cn(
+                                                    "text-[10px] font-bold px-2 py-0.5 rounded border",
+                                                    avgFinal >= 80 ? "bg-green-500/10 text-green-300 border-green-500/20" :
+                                                        avgFinal >= 65 ? "bg-yellow-500/10 text-yellow-200 border-yellow-500/20" :
+                                                            "bg-gray-700/20 text-gray-300 border-gray-700/30"
+                                                )}>
+                                                    FINAL {avgFinal}
                                                 </span>
                                             </CardTitle>
                                             <div className="text-xs text-gray-500 mt-1 flex gap-3">
@@ -218,20 +229,17 @@ export const IncubatorView = () => {
                                     <div className="flex-1 p-4 space-y-3 max-h-[400px] overflow-y-auto">
                                         {portfolio.assets.map(asset => {
                                             const curr = prices[asset.symbol] || asset.entryPrice;
-                                            const change = ((curr - asset.entryPrice) / asset.entryPrice) * 100;
                                             const assetPnL = (curr - asset.entryPrice) * asset.lots * 100000;
-                                            const aProfit = asset.side === 'LONG' ? assetPnL >= 0 : assetPnL <= 0;
                                             const finalPnL = asset.side === 'SHORT' ? -assetPnL : assetPnL;
                                             
                                             // Dynamic R:R based on score
-                                            const score = asset.technicalScore || 50;
-                                            const { rr, lotMultiplier, maxRisk } = calculateDynamicRR(score);
+                                            const finalScore = asset.finalScore ?? asset.technicalScore ?? 50;
+                                            const scanScore = asset.scanScore;
+                                            const microScore = asset.technicalScore;
+
+                                            const { rr, maxRisk } = calculateDynamicRR(finalScore);
                                             const effectiveRR = asset.riskReward || rr;
-                                            const riskProfile = asset.riskProfile || classifyRiskProfile(score);
-                                            
-                                            // Calculate distance to SL/TP
-                                            const slDistance = asset.stopLoss ? Math.abs(curr - asset.stopLoss) : null;
-                                            const tp1Distance = asset.takeProfit1 ? Math.abs(asset.takeProfit1 - curr) : null;
+                                            const riskProfile = asset.riskProfile || classifyRiskProfile(finalScore);
 
                                             return (
                                                 <div key={asset.symbol} className="border border-gray-800 rounded-lg p-3 bg-gray-950/50 hover:bg-gray-900/50 transition-all">
@@ -245,7 +253,7 @@ export const IncubatorView = () => {
                                                                 {asset.side}
                                                             </Badge>
                                                             <StatusBadge status={asset.scenarioStatus} />
-                                                            <RiskBadge profile={riskProfile} score={score} />
+                                                            <RiskBadge profile={riskProfile} score={finalScore} />
                                                         </div>
                                                         <div className={cn("font-mono font-bold text-lg", finalPnL >= 0 ? "text-green-400" : "text-red-400")}>
                                                             {finalPnL >= 0 ? '+' : ''}${finalPnL.toFixed(0)}
@@ -253,12 +261,23 @@ export const IncubatorView = () => {
                                                     </div>
                                                     
                                                     {/* Score & R:R Row */}
-                                                    <div className="grid grid-cols-4 gap-2 mb-2 text-[10px]">
+                                                    <div className="grid grid-cols-5 gap-2 mb-2 text-[10px]">
                                                         <div className="bg-gray-800/50 rounded px-2 py-1 text-center">
-                                                            <div className="text-gray-500 uppercase">Score</div>
+                                                            <div className="text-gray-500 uppercase">Final</div>
                                                             <div className={cn("font-bold font-mono",
-                                                                score >= 75 ? "text-green-400" : score >= 55 ? "text-yellow-400" : "text-red-400"
-                                                            )}>{score}</div>
+                                                                finalScore >= 80 ? "text-green-400" : finalScore >= 65 ? "text-yellow-400" : "text-red-400"
+                                                            )}>{finalScore}</div>
+                                                            <div className="text-[9px] text-gray-600 mt-0.5 font-mono">
+                                                                MICRO {microScore ?? '—'}
+                                                            </div>
+                                                        </div>
+                                                        <div className="bg-gray-800/50 rounded px-2 py-1 text-center">
+                                                            <div className="text-gray-500 uppercase">Scan</div>
+                                                            <div className={cn("font-bold font-mono",
+                                                                typeof scanScore === 'number' && scanScore >= 80 ? "text-green-400" :
+                                                                    typeof scanScore === 'number' && scanScore >= 55 ? "text-yellow-400" :
+                                                                        "text-gray-400"
+                                                            )}>{typeof scanScore === 'number' ? scanScore : '—'}</div>
                                                         </div>
                                                         <div className="bg-gray-800/50 rounded px-2 py-1 text-center">
                                                             <div className="text-gray-500 uppercase">R:R</div>

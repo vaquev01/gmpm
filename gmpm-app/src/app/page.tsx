@@ -8,6 +8,7 @@ import { IncubatorView } from '@/components/views/IncubatorView';
 import { MacroView } from '@/components/views/MacroView';
 import { MesoView } from '@/components/views/MesoView';
 import { MicroView } from '@/components/views/MicroView';
+import { LiquidityHeatmap } from '@/components/views/LiquidityHeatmap';
 import { AssetUniverseView } from '@/components/views/AssetUniverseView';
 import { useStore } from '@/store/useStore';
 
@@ -24,6 +25,8 @@ export default function Home() {
         return <MesoView />;
       case 'micro':
         return <MicroView />;
+      case 'liquidity':
+        return <LiquidityHeatmap />;
       case 'lab':
         return <LabView />;
       case 'factory':

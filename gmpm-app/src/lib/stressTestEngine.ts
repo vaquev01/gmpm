@@ -3,8 +3,6 @@
 // ===== STRESS TEST ENGINE =====
 // Simulates extreme market scenarios ("Black Swans") on the portfolio
 
-import { calculatePortfolioRisk } from './portfolioCorrelation';
-
 export interface StressScenario {
     name: string;
     description: string;

@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
-import { Asset, FeatureCategory, ScoreComponent, Timeframe, FractalConcept, ViewType, FactoryTab, MarketData, Signal, PortfolioConfig, IncubatorPortfolio, TrackedAsset } from '@/types';
+import { Asset, FeatureCategory, ScoreComponent, Timeframe, FractalConcept, ViewType, FactoryTab, MarketData, Signal, PortfolioConfig, IncubatorPortfolio } from '@/types';
 
 interface AppState {
     view: ViewType;

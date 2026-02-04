@@ -1,5 +1,16 @@
 import { defineConfig, devices } from '@playwright/test';
 
+const baseURL = process.env.PLAYWRIGHT_BASE_URL || 'http://localhost:3000';
+let devPort = '3000';
+try {
+  const u = new URL(baseURL);
+  if (u.hostname === 'localhost' || u.hostname === '127.0.0.1') {
+    devPort = u.port || devPort;
+  }
+} catch {
+  // ignore
+}
+
 export default defineConfig({
   testDir: './tests',
   timeout: 120_000,
@@ -11,7 +22,7 @@ export default defineConfig({
   retries: process.env.CI ? 2 : 0,
   reporter: [['list']],
   use: {
-    baseURL: process.env.PLAYWRIGHT_BASE_URL || 'http://localhost:3001',
+    baseURL,
     navigationTimeout: 90_000,
     actionTimeout: 30_000,
     trace: 'retain-on-failure',
@@ -19,8 +30,8 @@ export default defineConfig({
     video: 'retain-on-failure',
   },
   webServer: {
-    command: 'npm run dev -- -p 3001',
-    url: 'http://localhost:3001',
+    command: `npm run dev -- -p ${devPort}`,
+    url: baseURL,
     reuseExistingServer: true,
     timeout: 240_000,
   },

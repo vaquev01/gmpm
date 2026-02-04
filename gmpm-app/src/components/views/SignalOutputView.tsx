@@ -32,12 +32,12 @@ import {
     HistoricalSignal,
 } from '@/lib/signalHistory';
 import {
-    Play, Pause, RefreshCw, TrendingUp, TrendingDown,
+    Play, Pause, RefreshCw, TrendingUp,
     AlertCircle, Activity, Thermometer, BarChart3,
     Copy, Download, ChevronDown, ChevronUp, Target, Shield,
     Briefcase, AlertTriangle, CheckCircle, XCircle,
     DollarSign, Percent, TrendingDown as TrendDown,
-    Send, History, Settings, Bell, Layers
+    Send, History, Bell, Layers
 } from 'lucide-react';
 
 interface FredSummary {
@@ -78,6 +78,29 @@ export const SignalOutputView = () => {
     const [telegramToken, setTelegramToken] = useState('');
     const [telegramChatId, setTelegramChatId] = useState('');
     const [sendingTelegram, setSendingTelegram] = useState<string | null>(null);
+
+    const historySignals: HistoricalSignal[] = showHistory ? getSignalHistory() : [];
+
+    const promptExitPrice = (label: string, fallback: number) => {
+        const raw = prompt(label, String(fallback));
+        if (!raw) return null;
+        const n = Number(raw);
+        return Number.isFinite(n) ? n : null;
+    };
+
+    const handleMarkWin = (s: HistoricalSignal) => {
+        const exitPx = promptExitPrice(`Exit price for WIN (${s.symbol})`, s.takeProfit1);
+        if (exitPx == null) return;
+        markAsWin(s.id, exitPx);
+        setPerfStats(calculateStats());
+    };
+
+    const handleMarkLoss = (s: HistoricalSignal) => {
+        const exitPx = promptExitPrice(`Exit price for LOSS (${s.symbol})`, s.stopLoss);
+        if (exitPx == null) return;
+        markAsLoss(s.id, exitPx);
+        setPerfStats(calculateStats());
+    };
 
     // Load performance stats on mount
     useEffect(() => {
@@ -527,6 +550,51 @@ export const SignalOutputView = () => {
                             </div>
                         </div>
                     </div>
+
+                    {/* History list */}
+                    <div className="mt-4">
+                        <div className="flex items-center justify-between mb-2">
+                            <div className="text-xs text-gray-400">HISTÓRICO (últimos 12)</div>
+                            <div className="text-xs text-gray-500">Ações: Win/Loss (manual)</div>
+                        </div>
+                        <div className="space-y-2">
+                            {historySignals.slice(0, 12).map((s) => (
+                                <div key={s.id} className="flex items-center justify-between bg-gray-900/40 border border-gray-800 rounded p-2">
+                                    <div className="flex items-center gap-2">
+                                        <span className="text-white font-mono text-xs">{s.symbol}</span>
+                                        <span className={`text-[10px] px-2 py-0.5 rounded ${s.direction === 'LONG' ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}>
+                                            {s.direction}
+                                        </span>
+                                        <span className="text-[10px] text-gray-500">{s.status}</span>
+                                        {typeof s.pnlR === 'number' && (
+                                            <span className={`text-[10px] font-bold ${s.pnlR >= 0 ? 'text-green-400' : 'text-red-400'}`}>{s.pnlR.toFixed(2)}R</span>
+                                        )}
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                        {s.status === 'ACTIVE' && (
+                                            <>
+                                                <button
+                                                    onClick={() => handleMarkWin(s)}
+                                                    className="px-2 py-1 text-[10px] bg-green-600/30 hover:bg-green-600/40 text-green-300 rounded"
+                                                >
+                                                    WIN
+                                                </button>
+                                                <button
+                                                    onClick={() => handleMarkLoss(s)}
+                                                    className="px-2 py-1 text-[10px] bg-red-600/30 hover:bg-red-600/40 text-red-300 rounded"
+                                                >
+                                                    LOSS
+                                                </button>
+                                            </>
+                                        )}
+                                    </div>
+                                </div>
+                            ))}
+                            {historySignals.length === 0 && (
+                                <div className="text-xs text-gray-500">Nenhum histórico salvo ainda (use &quot;Save&quot; nos sinais).</div>
+                            )}
+                        </div>
+                    </div>
                 </div>
             )}
 
@@ -743,6 +811,25 @@ export const SignalOutputView = () => {
 
                                 {expandedSignal === signal.id && (
                                     <div className="border-t border-gray-700 p-3 space-y-3 bg-gray-900/30">
+                                        <div className="flex items-center justify-end gap-2">
+                                            <button
+                                                onClick={() => saveSignalToHistory(signal)}
+                                                className="px-3 py-1.5 bg-purple-700/30 hover:bg-purple-700/40 text-purple-200 rounded text-xs flex items-center gap-2"
+                                                title="Save to history"
+                                            >
+                                                <Layers className="w-3 h-3" /> Save
+                                            </button>
+                                            <button
+                                                onClick={() => sendToTelegram(signal)}
+                                                disabled={sendingTelegram === signal.id}
+                                                className="px-3 py-1.5 bg-cyan-700/30 hover:bg-cyan-700/40 disabled:opacity-50 text-cyan-200 rounded text-xs flex items-center gap-2"
+                                                title="Send to Telegram"
+                                            >
+                                                <Send className="w-3 h-3" />
+                                                {sendingTelegram === signal.id ? 'Sending...' : 'Telegram'}
+                                            </button>
+                                        </div>
+
                                         <div className="flex items-center gap-2">
                                             <code className="flex-1 bg-gray-900 px-2 py-1 rounded text-xs text-amber-400 font-mono">{signal.oneLiner}</code>
                                             <button

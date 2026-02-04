@@ -10,51 +10,82 @@ const CACHE_TTL_MS = 15_000; // 15 seconds for real-time
 // Fetch macro data from our own market API
 async function fetchMacroInputs(): Promise<MacroInputs> {
     const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000';
-    
+
+    const fetchJsonWithTimeout = async (url: string, timeoutMs: number) => {
+        const controller = new AbortController();
+        const t = setTimeout(() => controller.abort(), timeoutMs);
+        try {
+            const res = await fetch(url, {
+                cache: 'no-store',
+                headers: { 'Content-Type': 'application/json' },
+                signal: controller.signal,
+            });
+            const json = await res.json().catch(() => null);
+            return { ok: res.ok, status: res.status, json };
+        } finally {
+            clearTimeout(t);
+        }
+    };
+
     try {
-        const res = await fetch(`${baseUrl}/api/market?limit=50`, {
-            cache: 'no-store',
-            headers: { 'Content-Type': 'application/json' },
-        });
+        const [macroRes, marketRes] = await Promise.all([
+            fetchJsonWithTimeout(`${baseUrl}/api/macro`, 5000),
+            fetchJsonWithTimeout(`${baseUrl}/api/market?limit=50&macro=0`, 6000),
+        ]);
 
-        if (!res.ok) {
-            serverLog('warn', 'regime_market_fetch_failed', { status: res.status }, 'api/regime');
-            return {};
+        const macroJson = (macroRes.json && typeof macroRes.json === 'object') ? (macroRes.json as Record<string, unknown>) : {};
+        const marketJson = (marketRes.json && typeof marketRes.json === 'object') ? (marketRes.json as Record<string, unknown>) : {};
+
+        if (!macroRes.ok) {
+            serverLog('warn', 'regime_macro_fetch_failed', { status: macroRes.status }, 'api/regime');
+        }
+        if (!marketRes.ok) {
+            serverLog('warn', 'regime_market_fetch_failed', { status: marketRes.status }, 'api/regime');
         }
 
-        const data = await res.json();
-        
-        if (!data.success) {
-            serverLog('warn', 'regime_market_not_success', { data }, 'api/regime');
-            return {};
-        }
+        const macro = (macroJson && typeof macroJson.macro === 'object' && macroJson.macro !== null) ? (macroJson.macro as Record<string, unknown>) : {};
+        const stats = (marketJson && typeof marketJson.stats === 'object' && marketJson.stats !== null) ? (marketJson.stats as Record<string, unknown>) : {};
+        const assets = (marketJson && Array.isArray(marketJson.assets))
+            ? (marketJson.assets as Array<Record<string, unknown>>)
+            : (marketJson && Array.isArray(marketJson.data))
+                ? (marketJson.data as Array<Record<string, unknown>>)
+                : [];
 
-        const macro = data.macro || {};
-        const stats = data.stats || {};
-        const assets = data.assets || [];
+        const fgRaw = (macro as Record<string, unknown>).fearGreed;
+        const fearGreed = (typeof fgRaw === 'object' && fgRaw !== null)
+            ? (() => {
+                const r = fgRaw as Record<string, unknown>;
+                const value = typeof r.value === 'number' ? r.value : null;
+                const classification = typeof r.classification === 'string' ? r.classification : null;
+                if (value === null || classification === null) return null;
+                return { value, classification };
+            })()
+            : null;
 
         // Calculate adv/dec ratio
-        const gainers = stats.gainers || 0;
-        const losers = stats.losers || 0;
+        const gainers = typeof stats.gainers === 'number' ? stats.gainers : 0;
+        const losers = typeof stats.losers === 'number' ? stats.losers : 0;
         const advDecRatio = losers > 0 ? gainers / losers : (gainers > 0 ? 2 : 1);
 
         // Find DXY change from assets
-        const dxyAsset = assets.find((a: { symbol: string }) => a.symbol === 'DX=F' || a.symbol === 'DX-Y.NYB');
-        const dollarIndexChange = dxyAsset?.changePercent || null;
+        const dxyAsset = assets.find((a) => a?.symbol === 'DX=F' || a?.symbol === 'DX-Y.NYB');
+        const dxyAssetChg = dxyAsset && typeof dxyAsset.changePercent === 'number' ? dxyAsset.changePercent : null;
+        const macroDxyChg = typeof macro.dollarIndexChange === 'number' ? macro.dollarIndexChange : null;
+        const dollarIndexChange = macroDxyChg ?? dxyAssetChg;
 
         const inputs: MacroInputs = {
-            vix: macro.vix || undefined,
-            vixChange: macro.vixChange || undefined,
-            treasury10y: macro.treasury10y || undefined,
-            treasury2y: macro.treasury2y || undefined,
-            treasury30y: macro.treasury30y || undefined,
-            yieldCurve: macro.yieldCurve || undefined,
-            dollarIndex: macro.dollarIndex || undefined,
+            vix: typeof macro.vix === 'number' ? macro.vix : undefined,
+            vixChange: typeof macro.vixChange === 'number' ? macro.vixChange : undefined,
+            treasury10y: typeof macro.treasury10y === 'number' ? macro.treasury10y : undefined,
+            treasury2y: typeof macro.treasury2y === 'number' ? macro.treasury2y : undefined,
+            treasury30y: typeof macro.treasury30y === 'number' ? macro.treasury30y : undefined,
+            yieldCurve: typeof macro.yieldCurve === 'number' ? macro.yieldCurve : undefined,
+            dollarIndex: typeof macro.dollarIndex === 'number' ? macro.dollarIndex : undefined,
             dollarIndexChange: dollarIndexChange ?? undefined,
-            fearGreed: macro.fearGreed || null,
+            fearGreed,
             advDecRatio,
-            marketAvgChange: stats.avgChange || undefined,
-            dataTimestamp: data.timestamp,
+            marketAvgChange: typeof stats.avgChange === 'number' ? stats.avgChange : undefined,
+            dataTimestamp: typeof macroJson.timestamp === 'string' ? (macroJson.timestamp as string) : (typeof marketJson.timestamp === 'string' ? (marketJson.timestamp as string) : undefined),
         };
 
         return inputs;

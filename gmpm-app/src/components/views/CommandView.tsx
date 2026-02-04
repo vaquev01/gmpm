@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useCallback, useRef, useState, useEffect } from 'react';
+import React, { useCallback, useRef, useState, useEffect, useMemo } from 'react';
 import { useStore } from '@/store/useStore';
 import {
     getTrackingSummary,
@@ -19,7 +19,7 @@ import {
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { cn } from '@/lib/utils';
+import { cn, safeUUID } from '@/lib/utils';
 import {
     Table,
     TableBody,
@@ -57,6 +57,23 @@ interface RealAssetData {
     };
 }
 
+type MarketSnapshotResponse = {
+    success: boolean;
+    degraded?: boolean;
+    fallback?: boolean;
+    fallbackTimestamp?: string | null;
+    qualitySummary?: Record<string, number> | null;
+    tradeEnabled?: boolean;
+    tradeDisabledReason?: string | null;
+    tradeEnabledByClass?: Record<string, boolean> | null;
+    tradeDisabledReasonByClass?: Record<string, string | null> | null;
+    macro?: unknown;
+    data?: RealAssetData[];
+    count?: number;
+};
+
+type RadarMode = 'CONSERVATIVE' | 'BALANCED' | 'AGGRESSIVE';
+
 interface ScoredAsset extends RealAssetData {
     score: number;
     regime: string;
@@ -66,12 +83,25 @@ interface ScoredAsset extends RealAssetData {
     tp: string;
     sl: string;
     rr: string;
+    levelSource?: 'MICRO' | 'SCAN';
+    microAction?: 'EXECUTE' | 'WAIT' | 'AVOID';
+    scenarioStatus?: 'PRONTO' | 'DESENVOLVENDO' | 'CONTRA';
+    mesoDirection?: 'LONG' | 'SHORT';
+    mesoClass?: string;
+    mesoReason?: string;
+    mesoBlocked?: boolean;
+    riskLabel?: 'LOW' | 'MED' | 'HIGH';
+    trustScore?: number;
     timeframe: string;      // H4, H1, M15
     confluenceCount: number; // Number of confluences > 60
     rvol: number; // Relative Volume
     volatility: number; // Real volatility
     oneLiner: string;   // Generated thesis
     breakdown: {
+        components: Record<string, number>;
+        details: Record<string, string>;
+    };
+    finalBreakdown?: {
         components: Record<string, number>;
         details: Record<string, string>;
     };
@@ -1519,18 +1549,39 @@ const AssetDetailPanel = ({
 
     const liq = computeLiquidityMetrics(asset, flow);
     const isTradeable = asset.signal !== 'WAIT' && asset.quality?.status === 'OK';
+    const finalScore = typeof asset.trustScore === 'number' && Number.isFinite(asset.trustScore) ? asset.trustScore : asset.score;
+    const instrumentType = asset.symbol.endsWith('-USD') ? 'CRYPTO'
+        : asset.symbol.endsWith('=X') ? 'FX'
+            : asset.symbol.endsWith('=F') ? 'FUT'
+                : asset.symbol.startsWith('^') ? 'INDEX'
+                    : 'SPOT';
 
     return (
         <Card data-testid="asset-detail-panel" className="h-full bg-gray-900 border-gray-800 shadow-2xl flex flex-col animate-in slide-in-from-right duration-200">
             <CardHeader className="py-4 px-5 border-b border-gray-800 flex flex-row items-center justify-between bg-gray-900">
-                <div className="flex items-center gap-3">
-                    <span className={cn("text-2xl font-bold", asset.changePercent > 0 ? "text-green-400" : "text-red-400")}>
-                        {asset.displaySymbol}
-                    </span>
-                    <span className="text-sm font-mono text-gray-400">{asset.price.toFixed(2)}</span>
-                    <span className={cn("text-xs font-bold px-1.5 py-0.5 rounded", asset.changePercent > 0 ? "bg-green-500/20 text-green-400" : "bg-red-500/20 text-red-400")}>
-                        {asset.changePercent > 0 ? '+' : ''}{asset.changePercent.toFixed(2)}%
-                    </span>
+                <div className="flex flex-col">
+                    <div className="flex items-center gap-3">
+                        <span className={cn("text-2xl font-bold", asset.changePercent > 0 ? "text-green-400" : "text-red-400")}>
+                            {asset.displaySymbol}
+                        </span>
+                        <span className="text-sm font-mono text-gray-400">{asset.price.toFixed(2)}</span>
+                        <span className={cn("text-xs font-bold px-1.5 py-0.5 rounded", asset.changePercent > 0 ? "bg-green-500/20 text-green-400" : "bg-red-500/20 text-red-400")}>
+                            {asset.changePercent > 0 ? '+' : ''}{asset.changePercent.toFixed(2)}%
+                        </span>
+                    </div>
+                    <div className="mt-1 text-[10px] font-mono text-gray-500 flex items-center gap-2 flex-wrap">
+                        <span className="text-gray-300">{asset.symbol}</span>
+                        <span className="text-gray-700">|</span>
+                        <span className="text-gray-400">{instrumentType}</span>
+                        <span className="text-gray-700">|</span>
+                        <span className="uppercase text-gray-400">{asset.assetClass || '—'}</span>
+                        {asset.name ? (
+                            <>
+                                <span className="text-gray-700">|</span>
+                                <span className="text-gray-500">{asset.name}</span>
+                            </>
+                        ) : null}
+                    </div>
                 </div>
                 <Button data-testid="close-asset-detail" variant="ghost" size="icon" onClick={onClose} className="hover:bg-gray-800 rounded-full">
                     <X className="w-5 h-5 text-gray-400" />
@@ -1570,9 +1621,19 @@ const AssetDetailPanel = ({
                 </div>
 
                 {/* 2. SCORE & SIGNAL */}
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-3 gap-3">
                     <div className="bg-gray-800/40 p-3 rounded-md border border-gray-700/50">
-                        <div className="text-xs text-gray-500 uppercase font-bold mb-1">Score</div>
+                        <div className="text-xs text-gray-500 uppercase font-bold mb-1">Final</div>
+                        <div className="text-2xl font-bold text-white flex items-center gap-2">
+                            {finalScore}
+                            <span className="text-xs font-normal text-gray-500">/ 100</span>
+                        </div>
+                        <div className="w-full bg-gray-700 h-1.5 mt-2 rounded-full overflow-hidden">
+                            <div className={cn("h-full", finalScore > 50 ? "bg-green-500" : "bg-red-500")} style={{ width: `${finalScore}%` }} />
+                        </div>
+                    </div>
+                    <div className="bg-gray-800/40 p-3 rounded-md border border-gray-700/50">
+                        <div className="text-xs text-gray-500 uppercase font-bold mb-1">Scan</div>
                         <div className="text-2xl font-bold text-white flex items-center gap-2">
                             {asset.score}
                             <span className="text-xs font-normal text-gray-500">/ 100</span>
@@ -1723,17 +1784,42 @@ const AssetDetailPanel = ({
                 </div>
 
                 <div className="space-y-2 pt-2">
-                    <div className="text-xs font-bold text-gray-300 uppercase tracking-wider">Why this score</div>
+                    <div className="text-xs font-bold text-gray-300 uppercase tracking-wider">Why scan vs final</div>
                     <div className="grid grid-cols-1 gap-2">
-                        {Object.entries(asset.breakdown.components).map(([k, v]) => (
-                            <div key={k} className="bg-gray-950/40 border border-gray-800 rounded p-2">
-                                <div className="flex items-center justify-between">
-                                    <div className="text-[10px] text-gray-500 uppercase font-bold">{k}</div>
-                                    <div className="text-[10px] font-mono text-gray-200">{v}</div>
-                                </div>
-                                <div className="text-[10px] font-mono text-gray-500 mt-1 break-words">{asset.breakdown.details[k]}</div>
+                        <div className="bg-gray-950/40 border border-gray-800 rounded p-2">
+                            <div className="text-[10px] text-gray-500 uppercase font-bold">Scan (market confluence)</div>
+                            <div className="mt-2 grid grid-cols-1 gap-2">
+                                {Object.entries(asset.breakdown.components).map(([k, v]) => (
+                                    <div key={k} className="bg-gray-900/40 border border-gray-800 rounded p-2">
+                                        <div className="flex items-center justify-between">
+                                            <div className="text-[10px] text-gray-500 uppercase font-bold">{k}</div>
+                                            <div className="text-[10px] font-mono text-gray-200">{v}</div>
+                                        </div>
+                                        <div className="text-[10px] font-mono text-gray-500 mt-1 break-words">{asset.breakdown.details[k]}</div>
+                                    </div>
+                                ))}
                             </div>
-                        ))}
+                        </div>
+
+                        {asset.finalBreakdown ? (
+                            <div className="bg-gray-950/40 border border-gray-800 rounded p-2">
+                                <div className="text-[10px] text-gray-500 uppercase font-bold">Final (macro + meso + micro overlays)</div>
+                                <div className="mt-2 grid grid-cols-1 gap-2">
+                                    {Object.entries(asset.finalBreakdown.components).map(([k, v]) => (
+                                        <div key={k} className="bg-gray-900/40 border border-gray-800 rounded p-2">
+                                            <div className="flex items-center justify-between">
+                                                <div className="text-[10px] text-gray-500 uppercase font-bold">{k}</div>
+                                                <div className={cn(
+                                                    "text-[10px] font-mono",
+                                                    v < 0 ? "text-red-300" : "text-gray-200"
+                                                )}>{v}</div>
+                                            </div>
+                                            <div className="text-[10px] font-mono text-gray-500 mt-1 break-words">{asset.finalBreakdown?.details[k]}</div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        ) : null}
                     </div>
                 </div>
 
@@ -1761,9 +1847,16 @@ export const CommandView = () => {
     const { addPortfolio } = useStore(); // Added addPortfolio
     const [selectedScannerAsset, setSelectedScannerAsset] = useState<string | null>(null);
     const [filterText, setFilterText] = useState('');
-    const [sortBy, setSortBy] = useState<'vol' | 'rsi' | 'rvol'>('vol');
+    const [sortBy, setSortBy] = useState<'trust' | 'score' | 'vol' | 'rsi' | 'rvol' | 'rr'>('trust');
+    const [filterClass, setFilterClass] = useState<string>('ALL');
+    const [filterMicro, setFilterMicro] = useState<'ALL' | 'EXECUTE' | 'WAIT' | 'AVOID'>('ALL');
+    const [filterScenario, setFilterScenario] = useState<'ALL' | 'PRONTO' | 'DESENVOLVENDO' | 'CONTRA'>('ALL');
+    const [filterRisk, setFilterRisk] = useState<'ALL' | 'LOW' | 'MED' | 'HIGH'>('ALL');
 
     const fetchInFlightRef = useRef(false);
+    const fullUniverseInFlightRef = useRef(false);
+    const fullUniverseLoadedRef = useRef(false);
+    const macroInFlightRef = useRef(false);
 
     // PORTFOLIO BUILDER STATE
     const [selectedAssets, setSelectedAssets] = useState<Set<string>>(new Set());
@@ -1774,6 +1867,14 @@ export const CommandView = () => {
     const [macro, setMacro] = useState<unknown>(null);
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
+
+    const scannerTableScrollRef = useRef<HTMLDivElement | null>(null);
+    const [scannerTableScrollTop, setScannerTableScrollTop] = useState(0);
+    const [scannerTableViewportHeight, setScannerTableViewportHeight] = useState(600);
+    const [scannerTableRowHeight, setScannerTableRowHeight] = useState(64);
+    const scannerTableScrollRafRef = useRef<number | null>(null);
+    const scannerTableMeasuredRowHeightRef = useRef<number>(64);
+    const scannerTableLastFilterKeyRef = useRef<string>('');
     const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
     const [stats, setStats] = useState({ total: 0, latency: 0 });
     const [feedDegraded, setFeedDegraded] = useState(false);
@@ -1808,6 +1909,12 @@ export const CommandView = () => {
         symbol: string;
         displaySymbol: string;
         action: 'EXECUTE' | 'WAIT' | 'AVOID';
+        metrics?: {
+            pWin: number;
+            rrMin: number;
+            evR: number;
+            modelRisk: 'LOW' | 'MED' | 'HIGH';
+        };
         setup: {
             type: string;
             direction: 'LONG' | 'SHORT';
@@ -1826,6 +1933,12 @@ export const CommandView = () => {
             mesoAlignment?: boolean;
         } | null;
     }[]>([]);
+
+    const [radarMode, setRadarMode] = useState<RadarMode>('BALANCED');
+
+    const cycleRadarMode = useCallback(() => {
+        setRadarMode((m) => (m === 'CONSERVATIVE' ? 'BALANCED' : m === 'BALANCED' ? 'AGGRESSIVE' : 'CONSERVATIVE'));
+    }, []);
 
     // MICRO FULL ANALYSES (Technical data for expanded view)
     const [microAnalyses, setMicroAnalyses] = useState<{
@@ -1851,6 +1964,14 @@ export const CommandView = () => {
         };
     }[]>([]);
 
+    const microSetupBySymbol = useMemo(() => {
+        return new Map(
+            microSetups
+                .filter(s => s.setup)
+                .map(s => [s.symbol, s.setup!])
+        );
+    }, [microSetups]);
+
     // TOGGLE SELECTION
     const toggleSelection = (symbol: string, e: React.MouseEvent) => {
         e.stopPropagation();
@@ -1863,7 +1984,7 @@ export const CommandView = () => {
     // AUTO BUILDERS
     const autoBuildSafe = () => {
         // Safe: Score > 60, Low Volatility (<1.5%), Diversified Sectors
-        const candidates = assets.filter(a => a.score > 60 && a.volatility < 0.015);
+        const candidates = assets.filter(a => (a.trustScore ?? a.score) > 70 && a.volatility < 0.015);
         const uniqueSectors = new Set();
         const selected = new Set<string>();
 
@@ -1880,8 +2001,11 @@ export const CommandView = () => {
     };
 
     const autoBuildHigh = () => {
-        // High Potential: Top 5 by Score
-        const top5 = assets.slice(0, 5).map(a => a.symbol);
+        // High Potential: Top 5 by Final
+        const top5 = [...assets]
+            .sort((a, b) => (b.trustScore ?? b.score) - (a.trustScore ?? a.score))
+            .slice(0, 5)
+            .map(a => a.symbol);
         setSelectedAssets(new Set(top5));
     };
 
@@ -1897,6 +2021,7 @@ export const CommandView = () => {
                 const microAnalysis = microAnalyses.find(m => m.symbol === a.symbol);
                 const microSetup = microSetups.find(m => m.symbol === a.symbol);
                 const setup = microSetup?.setup;
+                const finalScore = typeof a.trustScore === 'number' && Number.isFinite(a.trustScore) ? a.trustScore : undefined;
                 
                 // Calculate risk profile and dynamic R:R based on score
                 const score = setup?.technicalScore || 50;
@@ -1912,6 +2037,8 @@ export const CommandView = () => {
                     side: (setup?.direction || (a.signal === 'SHORT' ? 'SHORT' : 'LONG')) as 'SHORT' | 'LONG',
                     lots: adjustedLots,
                     // SCAN/MICRO enrichment
+                    scanScore: a.score,
+                    finalScore,
                     stopLoss: setup?.stopLoss,
                     takeProfit1: setup?.takeProfit1,
                     takeProfit2: setup?.takeProfit2,
@@ -1927,7 +2054,7 @@ export const CommandView = () => {
             });
 
         addPortfolio({
-            id: crypto.randomUUID(),
+            id: safeUUID(),
             name: `Portfolio ${new Date().toLocaleTimeString()}`,
             createdAt: Date.now(),
             status: 'ACTIVE',
@@ -1947,24 +2074,32 @@ export const CommandView = () => {
         const start = performance.now();
         setRefreshing(true);
         try {
-            const res = await fetch('/api/market', { cache: 'no-store' }); // Fetch ALL assets (278+)
-            const data = await res.json();
-            const latency = Math.round(performance.now() - start);
+            const fetchJsonWithTimeout = async (url: string, timeoutMs: number) => {
+                const controller = new AbortController();
+                const t = window.setTimeout(() => controller.abort(), timeoutMs);
+                try {
+                    const res = await fetch(url, { cache: 'no-store', signal: controller.signal });
+                    return await res.json();
+                } finally {
+                    window.clearTimeout(t);
+                }
+            };
 
-            if (data.success) {
-                setFeedDegraded(Boolean(data.degraded));
-                setFeedFallback(Boolean(data.fallback));
-                setFeedFallbackTimestamp(typeof data.fallbackTimestamp === 'string' ? data.fallbackTimestamp : null);
-                setQualitySummary((typeof data.qualitySummary === 'object' && data.qualitySummary !== null) ? (data.qualitySummary as Record<string, number>) : null);
-                setTradeEnabled(typeof data.tradeEnabled === 'boolean' ? data.tradeEnabled : true);
-                setTradeDisabledReason(typeof data.tradeDisabledReason === 'string' ? data.tradeDisabledReason : null);
-                setTradeEnabledByClass((typeof data.tradeEnabledByClass === 'object' && data.tradeEnabledByClass !== null) ? (data.tradeEnabledByClass as Record<string, boolean>) : null);
-                setTradeDisabledReasonByClass((typeof data.tradeDisabledReasonByClass === 'object' && data.tradeDisabledReasonByClass !== null) ? (data.tradeDisabledReasonByClass as Record<string, string | null>) : null);
-                setMacro(data.macro);
+            const applySnapshot = (snapshot: MarketSnapshotResponse, latency: number) => {
+                setFeedDegraded(Boolean(snapshot.degraded));
+                setFeedFallback(Boolean(snapshot.fallback));
+                setFeedFallbackTimestamp(typeof snapshot.fallbackTimestamp === 'string' ? snapshot.fallbackTimestamp : null);
+                setQualitySummary((typeof snapshot.qualitySummary === 'object' && snapshot.qualitySummary !== null) ? (snapshot.qualitySummary as Record<string, number>) : null);
+                setTradeEnabled(typeof snapshot.tradeEnabled === 'boolean' ? snapshot.tradeEnabled : true);
+                setTradeDisabledReason(typeof snapshot.tradeDisabledReason === 'string' ? snapshot.tradeDisabledReason : null);
+                setTradeEnabledByClass((typeof snapshot.tradeEnabledByClass === 'object' && snapshot.tradeEnabledByClass !== null) ? (snapshot.tradeEnabledByClass as Record<string, boolean>) : null);
+                setTradeDisabledReasonByClass((typeof snapshot.tradeDisabledReasonByClass === 'object' && snapshot.tradeDisabledReasonByClass !== null) ? (snapshot.tradeDisabledReasonByClass as Record<string, string | null>) : null);
+
+                const rawAssets = Array.isArray(snapshot.data) ? snapshot.data : [];
 
                 try {
                     const priceMap: Record<string, number> = {};
-                    (data.data as RealAssetData[]).forEach((a) => {
+                    rawAssets.forEach((a) => {
                         if (a && typeof a.displaySymbol === 'string' && typeof a.price === 'number' && Number.isFinite(a.price)) {
                             priceMap[a.displaySymbol] = a.price;
                         }
@@ -1976,8 +2111,7 @@ export const CommandView = () => {
                     // ignore
                 }
 
-                // --- PROFESSIONAL SCORING ENGINE ---
-                const scored: ScoredAsset[] = data.data.map((asset: RealAssetData) => {
+                const scored: ScoredAsset[] = rawAssets.map((asset: RealAssetData) => {
                     const confluence = computeConfluenceScore(asset);
                     const score = confluence.score;
                     const signal = confluence.direction;
@@ -1985,33 +2119,27 @@ export const CommandView = () => {
                     const rvol = confluence.rvol;
                     const oneLiner = confluence.oneLiner;
 
-                    // Professional Execution Levels (Dynamic R:R based on volatility)
                     const dailyRange = (asset.high && asset.low) ? (asset.high - asset.low) : (asset.price * 0.015);
                     const entry = asset.price;
                     const dailyRangePercent = entry > 0 ? (dailyRange / entry) : 0.015;
                     const safeDailyRangePercent = Number.isFinite(dailyRangePercent) ? dailyRangePercent : 0.015;
                     const atrPercent = Math.max(0.003, Math.min(0.02, safeDailyRangePercent));
                     const atr = entry * atrPercent;
-                    
-                    // SL/TP based on normalized ATR% (keeps targets realistic across assets)
+
                     const slMultiplier = score > 70 ? 0.55 : score > 55 ? 0.65 : 0.8;
                     const sl = signal === 'LONG' ? entry - (atr * slMultiplier) : entry + (atr * slMultiplier);
-                    
-                    // Scanner shows TP1 (MICRO provides TP ladder)
+
                     const tpMultiplier = score > 70 ? 1.15 : score > 55 ? 1.0 : 0.85;
                     const tp = signal === 'LONG' ? entry + (atr * tpMultiplier) : entry - (atr * tpMultiplier);
-                    
-                    // Calculate actual R:R
+
                     const risk = Math.abs(entry - sl);
                     const reward = Math.abs(tp - entry);
                     const rrValue = risk > 0 ? (reward / risk) : 0;
-                    
-                    // Determine timeframe based on volatility
-                    const timeframe = atrPercent > 0.015 ? 'H4' : 
+
+                    const timeframe = atrPercent > 0.015 ? 'H4' :
                         atrPercent > 0.008 ? 'H1' : 'M15';
-                    
-                    // Count confluences
-                    const confluenceCount = confluence.breakdown?.components ? 
+
+                    const confluenceCount = confluence.breakdown?.components ?
                         Object.values(confluence.breakdown.components).filter((v): v is number => typeof v === 'number' && v > 60).length : 0;
 
                     return {
@@ -2033,15 +2161,58 @@ export const CommandView = () => {
                     };
                 });
 
-                // Filter out non-tradable or flat assets for the scanner
                 const validAssets = scored.filter(a => a.price > 0).sort((a, b) => b.score - a.score);
-
-                // DEDUPLICATE: Ensure no symbols are repeated (fix for key collisions)
                 const uniqueAssets = Array.from(new Map(validAssets.map(item => [item.symbol, item])).values());
 
                 setAssets(uniqueAssets);
-                setStats({ total: data.count, latency });
+                setStats({ total: typeof snapshot.count === 'number' ? snapshot.count : uniqueAssets.length, latency });
                 setLastUpdated(new Date());
+            };
+
+            let data: MarketSnapshotResponse;
+            try {
+                data = (await fetchJsonWithTimeout('/api/market?limit=120&macro=0', 12_000)) as MarketSnapshotResponse;
+            } catch (e) {
+                console.warn('Market feed fetch timeout/error; falling back to smaller snapshot', e);
+                data = (await fetchJsonWithTimeout('/api/market?limit=60&macro=0', 12_000)) as MarketSnapshotResponse;
+            }
+            const latency = Math.round(performance.now() - start);
+
+            if (data.success) {
+                applySnapshot(data, latency);
+
+                if (!macroInFlightRef.current) {
+                    macroInFlightRef.current = true;
+                    void (async () => {
+                        try {
+                            const m = (await fetchJsonWithTimeout('/api/macro', 6_000)) as Record<string, unknown>;
+                            const macroPayload = (typeof m === 'object' && m !== null) ? (m as Record<string, unknown>) : {};
+                            const macroValue = (typeof macroPayload.macro === 'object' && macroPayload.macro !== null) ? macroPayload.macro : null;
+                            if (macroValue) setMacro(macroValue);
+                        } catch {
+                            // ignore
+                        } finally {
+                            macroInFlightRef.current = false;
+                        }
+                    })();
+                }
+
+                if (!fullUniverseLoadedRef.current && !fullUniverseInFlightRef.current) {
+                    fullUniverseInFlightRef.current = true;
+                    void (async () => {
+                        try {
+                            const full = (await fetchJsonWithTimeout('/api/market?macro=0', 45_000)) as MarketSnapshotResponse;
+                            if (full.success && Array.isArray(full.data) && full.data.length > (Array.isArray(data.data) ? data.data.length : 0)) {
+                                applySnapshot(full, latency);
+                                fullUniverseLoadedRef.current = true;
+                            }
+                        } catch {
+                            // ignore
+                        } finally {
+                            fullUniverseInFlightRef.current = false;
+                        }
+                    })();
+                }
             }
         } catch (e) {
             console.error("Feed Error", e);
@@ -2050,72 +2221,96 @@ export const CommandView = () => {
             setRefreshing(false);
             fetchInFlightRef.current = false;
         }
-    }, []);
+}, []);
 
-    const executeSignal = useCallback((asset: ScoredAsset) => {
-        if (feedDegraded || feedFallback) return;
+const executeSignal = useCallback((asset: ScoredAsset) => {
+    if (feedDegraded || feedFallback) return;
 
-        const classAllowed = tradeEnabledByClass
-            ? Boolean(tradeEnabledByClass[asset.assetClass])
-            : tradeEnabled;
+    const classAllowed = tradeEnabledByClass
+        ? Boolean(tradeEnabledByClass[asset.assetClass])
+        : tradeEnabled;
 
-        if (!tradeEnabled || !classAllowed) return;
-        if (asset.signal === 'WAIT') return;
-        if (asset.quality?.status !== 'OK') return;
+    if (!tradeEnabled || !classAllowed) return;
+    if (asset.signal === 'WAIT') return;
+    if (asset.quality?.status !== 'OK') return;
 
-        const entry = asset.price;
+    const ms = microSetupBySymbol.get(asset.symbol);
+    const entry = ms?.entry ?? asset.price;
+    const direction = ms?.direction ?? asset.signal;
+    const sl = ms?.stopLoss ?? (() => {
         const dailyRange = (asset.high && asset.low) ? (asset.high - asset.low) : (asset.price * 0.015);
         const dailyRangePercent = entry > 0 ? (dailyRange / entry) : 0.015;
         const safeDailyRangePercent = Number.isFinite(dailyRangePercent) ? dailyRangePercent : 0.015;
         const atrPercent = Math.max(0.003, Math.min(0.02, safeDailyRangePercent));
         const atr = entry * atrPercent;
-
         const slMultiplier = asset.score > 70 ? 0.55 : asset.score > 55 ? 0.65 : 0.8;
+        return direction === 'LONG' ? entry - (atr * slMultiplier) : entry + (atr * slMultiplier);
+    })();
+    const tp1 = ms?.takeProfit1 ?? (() => {
+        const dailyRange = (asset.high && asset.low) ? (asset.high - asset.low) : (asset.price * 0.015);
+        const dailyRangePercent = entry > 0 ? (dailyRange / entry) : 0.015;
+        const safeDailyRangePercent = Number.isFinite(dailyRangePercent) ? dailyRangePercent : 0.015;
+        const atrPercent = Math.max(0.003, Math.min(0.02, safeDailyRangePercent));
+        const atr = entry * atrPercent;
         const tp1Multiplier = asset.score > 70 ? 1.15 : asset.score > 55 ? 1.0 : 0.85;
+        return direction === 'LONG' ? entry + (atr * tp1Multiplier) : entry - (atr * tp1Multiplier);
+    })();
+    const tp2 = ms?.takeProfit2 ?? (() => {
+        const dailyRange = (asset.high && asset.low) ? (asset.high - asset.low) : (asset.price * 0.015);
+        const dailyRangePercent = entry > 0 ? (dailyRange / entry) : 0.015;
+        const safeDailyRangePercent = Number.isFinite(dailyRangePercent) ? dailyRangePercent : 0.015;
+        const atrPercent = Math.max(0.003, Math.min(0.02, safeDailyRangePercent));
+        const atr = entry * atrPercent;
+        const tp1Multiplier = asset.score > 70 ? 1.15 : asset.score > 55 ? 1.0 : 0.85;
+        return direction === 'LONG' ? entry + (atr * (tp1Multiplier * 1.5)) : entry - (atr * (tp1Multiplier * 1.5));
+    })();
+    const tp3 = ms?.takeProfit3 ?? (() => {
+        const dailyRange = (asset.high && asset.low) ? (asset.high - asset.low) : (asset.price * 0.015);
+        const dailyRangePercent = entry > 0 ? (dailyRange / entry) : 0.015;
+        const safeDailyRangePercent = Number.isFinite(dailyRangePercent) ? dailyRangePercent : 0.015;
+        const atrPercent = Math.max(0.003, Math.min(0.02, safeDailyRangePercent));
+        const atr = entry * atrPercent;
+        const tp1Multiplier = asset.score > 70 ? 1.15 : asset.score > 55 ? 1.0 : 0.85;
+        return direction === 'LONG' ? entry + (atr * (tp1Multiplier * 2.0)) : entry - (atr * (tp1Multiplier * 2.0));
+    })();
 
-        const sl = asset.signal === 'LONG' ? entry - (atr * slMultiplier) : entry + (atr * slMultiplier);
+    // EVALUATE GATES (Institutional Framework)
+    let gatesResult: GateSummary | null = null;
+    let gatesSummary: GateResultSummary[] = [];
+    let gatesAllPass = true;
 
-        const tp1 = asset.signal === 'LONG' ? entry + (atr * tp1Multiplier) : entry - (atr * tp1Multiplier);
-        const tp2 = asset.signal === 'LONG' ? entry + (atr * (tp1Multiplier * 1.5)) : entry - (atr * (tp1Multiplier * 1.5));
-        const tp3 = asset.signal === 'LONG' ? entry + (atr * (tp1Multiplier * 2.0)) : entry - (atr * (tp1Multiplier * 2.0));
+    if (regime) {
+        const tradeContext: TradeContext = {
+            symbol: asset.symbol,
+            direction,
+            assetClass: asset.assetClass,
+            score: asset.score,
+            signal: asset.signal,
+            quality: asset.quality,
+            liquidityScore: asset.breakdown?.components?.liquidity,
+            entryPrice: entry,
+            stopPrice: sl,
+            targetPrice: tp1,
+            currentHour: new Date().getUTCHours(),
+        };
 
-        // EVALUATE GATES (Institutional Framework)
-        let gatesResult: GateSummary | null = null;
-        let gatesSummary: GateResultSummary[] = [];
-        let gatesAllPass = true;
+        gatesResult = evaluateGates(regime, tradeContext);
+        gatesAllPass = gatesResult.allPass;
+        gatesSummary = Object.values(gatesResult.gates).map(g => ({
+            gate: g.gate,
+            status: g.status as 'PASS' | 'FAIL' | 'WARN' | 'SKIP',
+            reasons: g.reasons,
+        }));
 
-        if (regime) {
-            const tradeContext: TradeContext = {
-                symbol: asset.symbol,
-                direction: asset.signal,
-                assetClass: asset.assetClass,
-                score: asset.score,
-                signal: asset.signal,
-                quality: asset.quality,
-                liquidityScore: asset.breakdown?.components?.liquidity,
-                entryPrice: entry,
-                stopPrice: sl,
-                targetPrice: tp1,
-                currentHour: new Date().getUTCHours(),
-            };
-
-            gatesResult = evaluateGates(regime, tradeContext);
-            gatesAllPass = gatesResult.allPass;
-            gatesSummary = Object.values(gatesResult.gates).map(g => ({
-                gate: g.gate,
-                status: g.status as 'PASS' | 'FAIL' | 'WARN' | 'SKIP',
-                reasons: g.reasons,
-            }));
-
-            // Log gate evaluation for observability
-            if (!gatesAllPass) {
-                console.info(`[GATES] ${asset.displaySymbol} blocked:`, gatesResult.blockingReasons);
-            } else if (gatesResult.warnings.length > 0) {
-                console.info(`[GATES] ${asset.displaySymbol} warnings:`, gatesResult.warnings);
-            }
+        // Log gate evaluation for observability
+        if (!gatesAllPass) {
+            console.info(`[GATES] ${asset.displaySymbol} blocked:`, gatesResult.blockingReasons);
+        } else if (gatesResult.warnings.length > 0) {
+            console.info(`[GATES] ${asset.displaySymbol} warnings:`, gatesResult.warnings);
         }
+    }
 
-        const id = crypto.randomUUID();
+        const id = safeUUID();
 
         const confN = Number(String(asset.conf).replace('%', ''));
         const confidence = Number.isFinite(confN)
@@ -2126,7 +2321,7 @@ export const CommandView = () => {
             id,
             asset: asset.displaySymbol,
             assetClass: asset.assetClass,
-            direction: asset.signal,
+            direction,
             price: entry,
             stopLoss: sl,
             takeProfits: [
@@ -2146,7 +2341,7 @@ export const CommandView = () => {
         addSignal({
             id,
             symbol: asset.displaySymbol,
-            direction: asset.signal,
+            direction,
             score: asset.score,
             confidence,
             assetType: asset.assetClass,
@@ -2167,13 +2362,23 @@ export const CommandView = () => {
         } catch {
             // ignore
         }
-    }, [feedDegraded, feedFallback, tradeEnabledByClass, tradeEnabled, regime]);
+    }, [feedDegraded, feedFallback, tradeEnabledByClass, tradeEnabled, regime, microSetupBySymbol]);
 
     useEffect(() => {
         fetchData();
         const interval = setInterval(fetchData, 15000); // Poll every 15s for real-time
         return () => clearInterval(interval);
     }, [fetchData]);
+
+    useEffect(() => {
+        const el = scannerTableScrollRef.current;
+        if (!el) return;
+        const update = () => setScannerTableViewportHeight(el.clientHeight || 600);
+        update();
+        const ro = new ResizeObserver(update);
+        ro.observe(el);
+        return () => ro.disconnect();
+    }, []);
 
     // FETCH REGIME + MESO + MICRO (Full Pipeline)
     useEffect(() => {
@@ -2214,6 +2419,7 @@ export const CommandView = () => {
                         symbol: a.symbol,
                         displaySymbol: a.displaySymbol,
                         action: a.recommendation.action as 'EXECUTE' | 'WAIT' | 'AVOID',
+                        metrics: a.recommendation.metrics,
                         setup: a.recommendation.bestSetup || (a.setups.length > 0 ? a.setups[0] : null),
                     }));
                     setMicroSetups(setups);
@@ -2247,13 +2453,442 @@ export const CommandView = () => {
         return Boolean(tradeEnabledByClass[assetClass]);
     };
 
-    const activeSignals = feedHealthy
-        ? assets.filter(a => a.signal !== 'WAIT' && classGate(a.assetClass))
-        : [];
-    const scannerList = activeSignals.slice(0, 200); // Show up to 200 active signals
-    const marketWatchList = assets; // Show all in sidebar (filtered)
+    const pipelineUniverseSymbols = useMemo(() => {
+        const s = new Set<string>();
+        (mesoData?.allowedInstruments || []).forEach(i => {
+            if (i && typeof i.symbol === 'string') s.add(i.symbol);
+        });
+        microSetups.forEach(m => {
+            if (m && typeof m.symbol === 'string') s.add(m.symbol);
+        });
+        return s;
+    }, [mesoData, microSetups]);
 
-    const selectedAssetData = selectedScannerAsset ? assets.find(a => a.symbol === selectedScannerAsset) : null;
+    const activeSignals = feedHealthy
+        ? assets.filter(a => (a.signal !== 'WAIT' || pipelineUniverseSymbols.has(a.symbol)) && classGate(a.assetClass))
+        : [];
+
+    const scannerUniverse = assets.filter(a => classGate(a.assetClass));
+    const scannerList = scannerUniverse;
+
+    const microActionBySymbol = useMemo(() => {
+        return new Map(microSetups.map(s => [s.symbol, s.action]));
+    }, [microSetups]);
+
+    const microMetricsBySymbol = useMemo(() => {
+        return new Map(microSetups.map(s => [s.symbol, s.metrics]));
+    }, [microSetups]);
+
+    const microAnalysisBySymbol = useMemo(() => {
+        return new Map(microAnalyses.map(a => [a.symbol, a]));
+    }, [microAnalyses]);
+
+    const mesoAllowedBySymbol = useMemo(() => {
+        return new Map((mesoData?.allowedInstruments || []).map(i => [i.symbol, i]));
+    }, [mesoData]);
+
+    const mesoProhibitedBySymbol = useMemo(() => {
+        return new Map((mesoData?.prohibitedInstruments || []).map(i => [i.symbol, i]));
+    }, [mesoData]);
+
+    const scannerRows = useMemo(() => {
+        const formatPrice = (price: number) => price < 10 ? price.toFixed(4) : price.toFixed(2);
+
+        const macroGateStatus = !regime ? 'LOADING' :
+            regime.regimeConfidence === 'UNAVAILABLE' ? 'FAIL' :
+            regime.axes.L.direction === '↓↓' || regime.axes.C.direction === '↓↓' ? 'FAIL' :
+            regime.regimeConfidence === 'OK' ? 'PASS' : 'WARN';
+
+        const now = new Date();
+        const hour = now.getUTCHours();
+        const goodHours = [7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
+        const badHours = [21, 22, 23, 0, 1, 2, 3];
+        const execWindow: 'PASS' | 'WARN' = badHours.includes(hour) ? 'WARN' : goodHours.includes(hour) ? 'PASS' : 'WARN';
+
+        return scannerList.map((row) => {
+            const ms = microSetupBySymbol.get(row.symbol);
+
+            const microAction = microActionBySymbol.get(row.symbol);
+            const microMetrics = microMetricsBySymbol.get(row.symbol);
+            const analysis = microAnalysisBySymbol.get(row.symbol);
+            const scenarioStatus = analysis?.scenarioAnalysis?.status as ScoredAsset['scenarioStatus'] | undefined;
+
+            const mesoAllowed = mesoAllowedBySymbol.get(row.symbol);
+            const mesoProhibited = mesoProhibitedBySymbol.get(row.symbol);
+            const mesoDirection = mesoAllowed?.direction as ScoredAsset['mesoDirection'] | undefined;
+            const mesoClass = typeof mesoAllowed?.class === 'string' ? mesoAllowed.class : undefined;
+            const mesoReason = typeof mesoAllowed?.reason === 'string' ? mesoAllowed.reason : undefined;
+            const mesoBlocked = Boolean(mesoProhibited);
+
+            const baseRow = !ms ? {
+                    ...row,
+                    levelSource: 'SCAN' as const,
+                    microAction,
+                    scenarioStatus,
+                    mesoDirection,
+                    mesoClass,
+                    mesoReason,
+                    mesoBlocked,
+                }
+                : {
+                ...row,
+                signal: ms.direction,
+                timeframe: ms.timeframe || row.timeframe,
+                confluenceCount: Array.isArray(ms.confluences) ? ms.confluences.length : row.confluenceCount,
+                entry: formatPrice(ms.entry),
+                sl: formatPrice(ms.stopLoss),
+                tp: formatPrice(ms.takeProfit1),
+                rr: (ms.riskReward ?? Number(row.rr)).toFixed(1),
+                levelSource: 'MICRO' as const,
+                microAction,
+                scenarioStatus,
+                mesoDirection,
+                mesoClass,
+                mesoReason,
+                mesoBlocked,
+            };
+
+            const rrNum = Number.parseFloat(baseRow.rr);
+            const liq = baseRow.breakdown?.components?.liquidity ?? 0;
+            const vol = baseRow.volatility ?? 0;
+
+            let riskPoints = 0;
+            if (macroGateStatus === 'FAIL') riskPoints += 5;
+            else if (macroGateStatus === 'WARN') riskPoints += 1;
+
+            if (baseRow.mesoBlocked) riskPoints += 8;
+
+            if (baseRow.levelSource !== 'MICRO') riskPoints += 1;
+
+            if (baseRow.microAction === 'AVOID') riskPoints += 5;
+            else if (baseRow.microAction === 'WAIT') riskPoints += 2;
+
+            if (baseRow.scenarioStatus === 'CONTRA') riskPoints += 5;
+            else if (baseRow.scenarioStatus === 'DESENVOLVENDO') riskPoints += 2;
+
+            if (microMetrics && Number.isFinite(microMetrics.rrMin)) {
+                if (!Number.isFinite(rrNum) || rrNum < microMetrics.rrMin) riskPoints += 4;
+            } else {
+                if (!Number.isFinite(rrNum) || rrNum < 1.2) riskPoints += 4;
+                else if (rrNum < 1.5) riskPoints += 2;
+                else if (rrNum < 1.8) riskPoints += 1;
+            }
+
+            if (microMetrics && Number.isFinite(microMetrics.evR) && microMetrics.evR < 0) riskPoints += 2;
+
+            if (vol >= 5) riskPoints += 3;
+            else if (vol >= 3) riskPoints += 2;
+            else if (vol >= 1.8) riskPoints += 1;
+
+            if (liq < 30) riskPoints += 3;
+            else if (liq < 50) riskPoints += 2;
+            else if (liq < 60) riskPoints += 1;
+
+            if (execWindow === 'WARN') riskPoints += 1;
+
+            const riskLabel: ScoredAsset['riskLabel'] = riskPoints <= 3 ? 'LOW' : riskPoints <= 7 ? 'MED' : 'HIGH';
+
+            const scanScore = typeof baseRow.score === 'number' && Number.isFinite(baseRow.score) ? baseRow.score : 0;
+
+            const macroScore = macroGateStatus === 'PASS' ? 80 : macroGateStatus === 'WARN' ? 55 : macroGateStatus === 'FAIL' ? 20 : 50;
+
+            let mesoScore = 30;
+            if (baseRow.mesoBlocked) mesoScore = 0;
+            else if (baseRow.mesoDirection) mesoScore = baseRow.signal === baseRow.mesoDirection ? 80 : 35;
+
+            const actionScore = baseRow.microAction === 'EXECUTE' ? 85 : baseRow.microAction === 'WAIT' ? 60 : baseRow.microAction === 'AVOID' ? 20 : 50;
+            const scenarioScore = baseRow.scenarioStatus === 'PRONTO' ? 80 : baseRow.scenarioStatus === 'DESENVOLVENDO' ? 60 : baseRow.scenarioStatus === 'CONTRA' ? 30 : 50;
+
+            let microScore = 50;
+            if (ms && typeof ms.technicalScore === 'number' && Number.isFinite(ms.technicalScore)) microScore = ms.technicalScore;
+            microScore = Math.round(microScore * 0.6 + actionScore * 0.2 + scenarioScore * 0.2);
+
+            if (microMetrics && Number.isFinite(microMetrics.evR)) {
+                microScore += Math.max(-10, Math.min(10, microMetrics.evR * 20));
+                if (microMetrics.modelRisk === 'LOW') microScore += 3;
+                else if (microMetrics.modelRisk === 'HIGH') microScore -= 4;
+            }
+
+            if (Number.isFinite(rrNum)) {
+                const rrTarget = microMetrics && Number.isFinite(microMetrics.rrMin) ? microMetrics.rrMin : 1.5;
+                microScore += Math.max(-8, Math.min(8, (rrNum - rrTarget) * 10));
+            }
+
+            microScore = Math.max(0, Math.min(100, Math.round(microScore)));
+
+            const riskPenalty = riskLabel === 'LOW' ? 0 : riskLabel === 'MED' ? 6 : 14;
+            const qualityPenalty = baseRow.quality?.status === 'OK'
+                ? 0
+                : baseRow.quality?.status === 'PARTIAL'
+                    ? 3
+                    : baseRow.quality?.status === 'STALE'
+                        ? 8
+                        : baseRow.quality?.status === 'SUSPECT'
+                            ? 15
+                            : 0;
+
+            const finalScore = Math.round(
+                scanScore * 0.35 +
+                microScore * 0.35 +
+                mesoScore * 0.2 +
+                macroScore * 0.1 -
+                riskPenalty -
+                qualityPenalty
+            );
+
+            const trustScore = Math.max(0, Math.min(100, finalScore));
+
+            const finalBreakdown = {
+                components: {
+                    scan: Math.round(scanScore),
+                    micro: Math.round(microScore),
+                    meso: Math.round(mesoScore),
+                    macro: Math.round(macroScore),
+                    riskPenalty: -riskPenalty,
+                    qualityPenalty: -qualityPenalty,
+                },
+                details: {
+                    scan: 'Price/volume/liquidity confluence from the global scanner',
+                    micro: 'Execution readiness: setup technicalScore + action/scenario + EV/RR adjustments',
+                    meso: 'Universe gate: allowed vs blocked + alignment with MESO direction',
+                    macro: 'Regime gate: liquidity/credit stress and regime confidence',
+                    riskPenalty: `Penalty from riskLabel=${riskLabel} + volatility/liquidity/EV/RR window`,
+                    qualityPenalty: `Penalty from quote quality status=${baseRow.quality?.status ?? 'N/A'}`,
+                },
+            };
+
+            return { ...baseRow, riskLabel, trustScore, finalBreakdown };
+        });
+    }, [scannerList, microSetupBySymbol, microActionBySymbol, microMetricsBySymbol, microAnalysisBySymbol, mesoAllowedBySymbol, mesoProhibitedBySymbol, regime]);
+
+    const visibleScannerRows = useMemo(() => {
+        const minTrust = radarMode === 'CONSERVATIVE' ? 70 : radarMode === 'BALANCED' ? 55 : 35;
+        const allowRisk: Array<NonNullable<ScoredAsset['riskLabel']>> = radarMode === 'CONSERVATIVE'
+            ? ['LOW']
+            : radarMode === 'BALANCED'
+                ? ['LOW', 'MED']
+                : ['LOW', 'MED', 'HIGH'];
+
+        return scannerRows
+            .filter(r => !r.mesoBlocked)
+            .filter(r => Boolean(r.mesoDirection))
+            .filter(r => r.levelSource === 'MICRO')
+            .filter(r => r.microAction !== 'AVOID')
+            .filter(r => r.scenarioStatus !== 'CONTRA')
+            .filter(r => !r.riskLabel || allowRisk.includes(r.riskLabel))
+            .filter(r => (r.trustScore ?? 0) >= minTrust);
+    }, [scannerRows, radarMode]);
+
+    const tableRows = useMemo(() => {
+        const q = filterText.trim().toLowerCase();
+        const filtered0 = q
+            ? scannerRows.filter(r => {
+                const hay = [
+                    r.displaySymbol,
+                    r.symbol,
+                    r.name,
+                    r.assetClass,
+                    r.sector,
+                    r.signal,
+                    r.levelSource,
+                    r.microAction,
+                    r.scenarioStatus,
+                    r.mesoDirection,
+                    r.riskLabel,
+                ]
+                    .filter(Boolean)
+                    .join(' ')
+                    .toLowerCase();
+
+                return hay.includes(q);
+            })
+            : scannerRows;
+
+        const filtered = filtered0
+            .filter((r) => filterClass === 'ALL' ? true : r.assetClass === filterClass)
+            .filter((r) => filterMicro === 'ALL' ? true : (r.microAction || 'WAIT') === filterMicro)
+            .filter((r) => filterScenario === 'ALL' ? true : (r.scenarioStatus || 'DESENVOLVENDO') === filterScenario)
+            .filter((r) => filterRisk === 'ALL' ? true : (r.riskLabel || 'MED') === filterRisk);
+
+        const sorted = [...filtered];
+        if (sortBy === 'trust') {
+            sorted.sort((a, b) => (b.trustScore ?? 0) - (a.trustScore ?? 0));
+        } else if (sortBy === 'score') {
+            sorted.sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+        } else if (sortBy === 'rr') {
+            sorted.sort((a, b) => {
+                const ra = Number.parseFloat(String(a.rr));
+                const rb = Number.parseFloat(String(b.rr));
+                return (Number.isFinite(rb) ? rb : 0) - (Number.isFinite(ra) ? ra : 0);
+            });
+        } else if (sortBy === 'vol') {
+            sorted.sort((a, b) => (b.volatility ?? 0) - (a.volatility ?? 0));
+        } else if (sortBy === 'rsi') {
+            sorted.sort((a, b) => {
+                const da = Math.abs(((a.rsi ?? 50) as number) - 50);
+                const db = Math.abs(((b.rsi ?? 50) as number) - 50);
+                return db - da;
+            });
+        } else if (sortBy === 'rvol') {
+            sorted.sort((a, b) => (b.rvol ?? 0) - (a.rvol ?? 0));
+        }
+
+        return sorted;
+    }, [scannerRows, filterText, sortBy, filterClass, filterMicro, filterScenario, filterRisk]);
+
+    useEffect(() => {
+        const key = `${filterText}|${sortBy}|${filterClass}|${filterMicro}|${filterScenario}|${filterRisk}`;
+        if (scannerTableLastFilterKeyRef.current && scannerTableLastFilterKeyRef.current !== key) {
+            const el = scannerTableScrollRef.current;
+            if (el) el.scrollTop = 0;
+            setScannerTableScrollTop(0);
+        }
+        scannerTableLastFilterKeyRef.current = key;
+    }, [filterText, sortBy, filterClass, filterMicro, filterScenario, filterRisk]);
+
+    const onScannerTableScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
+        const next = e.currentTarget.scrollTop;
+        if (scannerTableScrollRafRef.current !== null) {
+            cancelAnimationFrame(scannerTableScrollRafRef.current);
+        }
+        scannerTableScrollRafRef.current = requestAnimationFrame(() => {
+            setScannerTableScrollTop(next);
+            scannerTableScrollRafRef.current = null;
+        });
+    }, []);
+
+    const measureScannerTableRow = useCallback((node: HTMLTableRowElement | null) => {
+        if (!node) return;
+        const h = Math.round(node.getBoundingClientRect().height);
+        if (h > 0 && Math.abs(h - scannerTableMeasuredRowHeightRef.current) > 2) {
+            scannerTableMeasuredRowHeightRef.current = h;
+            setScannerTableRowHeight(h);
+        }
+    }, []);
+
+    const virtualScanner = useMemo(() => {
+        const total = tableRows.length;
+        const rowH = Math.max(1, scannerTableRowHeight);
+        const overscan = 10;
+        if (total === 0) {
+            return { start: 0, end: 0, topPad: 0, bottomPad: 0, rows: [] as typeof tableRows };
+        }
+        const rawStart = Math.max(0, Math.floor(scannerTableScrollTop / rowH) - overscan);
+        const start = Math.min(total - 1, rawStart);
+        const rawEnd = Math.ceil((scannerTableScrollTop + scannerTableViewportHeight) / rowH) + overscan;
+        const end = Math.min(total, Math.max(start + 1, rawEnd));
+        const topPad = start * rowH;
+        const bottomPad = (total - end) * rowH;
+        return { start, end, topPad, bottomPad, rows: tableRows.slice(start, end) };
+    }, [tableRows, scannerTableScrollTop, scannerTableViewportHeight, scannerTableRowHeight]);
+
+    const assetClassOptions = useMemo(() => {
+        const set = new Set<string>();
+        scannerRows.forEach((r) => {
+            if (r && typeof r.assetClass === 'string') set.add(r.assetClass);
+        });
+        return Array.from(set.values()).sort();
+    }, [scannerRows]);
+
+    const microCandidateCounts = useMemo(() => {
+        const candidates = scannerRows
+            .filter(r => !r.mesoBlocked)
+            .filter(r => Boolean(r.mesoDirection))
+            .filter(r => r.levelSource === 'MICRO');
+
+        const byAction = candidates.reduce(
+            (acc, r) => {
+                const a = r.microAction || 'WAIT';
+                acc[a] = (acc[a] || 0) + 1;
+                return acc;
+            },
+            {} as Record<'EXECUTE' | 'WAIT' | 'AVOID', number>
+        );
+
+        return {
+            total: candidates.length,
+            execute: byAction.EXECUTE || 0,
+            wait: byAction.WAIT || 0,
+            avoid: byAction.AVOID || 0,
+        };
+    }, [scannerRows]);
+
+    const topGuaranteed = useMemo(() => {
+        return visibleScannerRows
+            .filter(r => r.microAction === 'EXECUTE')
+            .filter(r => r.scenarioStatus === 'PRONTO')
+            .filter(r => r.riskLabel === 'LOW')
+            .sort((a, b) => (b.trustScore ?? 0) - (a.trustScore ?? 0))
+            .slice(0, 3);
+    }, [visibleScannerRows]);
+
+    const veryReliable = useMemo(() => {
+        const topSet = new Set(topGuaranteed.map(r => r.symbol));
+        return visibleScannerRows
+            .filter(r => !topSet.has(r.symbol))
+            .sort((a, b) => (b.trustScore ?? 0) - (a.trustScore ?? 0))
+            .slice(0, 10);
+    }, [visibleScannerRows, topGuaranteed]);
+
+    const selectedAssetData = selectedScannerAsset
+        ? (scannerRows.find(a => a.symbol === selectedScannerAsset) || assets.find(a => a.symbol === selectedScannerAsset) || null)
+        : null;
+
+    const instrumentTypeLabel = (symbol: string) => {
+        if (symbol.endsWith('-USD')) return 'CRYPTO';
+        if (symbol.endsWith('=X')) return 'FX';
+        if (symbol.endsWith('=F')) return 'FUT';
+        if (symbol.startsWith('^')) return 'INDEX';
+        return 'SPOT';
+    };
+
+    const fallbackInstrumentName = (symbol: string) => {
+        const map: Record<string, string> = {
+            'GC=F': 'Gold Futures',
+            'SI=F': 'Silver Futures',
+            'CL=F': 'Crude Oil Futures',
+            'BZ=F': 'Brent Crude Futures',
+            'NG=F': 'Natural Gas Futures',
+            'RB=F': 'RBOB Gasoline Futures',
+            'HG=F': 'Copper Futures',
+            'ZC=F': 'Corn Futures',
+            'ZW=F': 'Wheat Futures',
+            'ZS=F': 'Soybean Futures',
+        };
+        return map[symbol] || '';
+    };
+
+    const fallbackInstrumentShortName = (symbol: string) => {
+        const map: Record<string, string> = {
+            'GC=F': 'Gold',
+            'SI=F': 'Silver',
+            'CL=F': 'Crude',
+            'BZ=F': 'Brent',
+            'NG=F': 'NatGas',
+            'RB=F': 'Gasoline',
+            'HG=F': 'Copper',
+            'ZC=F': 'Corn',
+            'ZW=F': 'Wheat',
+            'ZS=F': 'Soybean',
+        };
+        return map[symbol] || '';
+    };
+
+    const shortInstrumentName = (symbol: string, name?: string) => {
+        const fromMap = fallbackInstrumentShortName(symbol);
+        if (fromMap) return fromMap;
+        const raw = (name || fallbackInstrumentName(symbol) || '').trim();
+        if (!raw) return '';
+        const cleaned = raw
+            .replace(/\bFutures?\b/gi, '')
+            .replace(/\bIndex\b/gi, '')
+            .replace(/\bETF\b/gi, '')
+            .replace(/\s+/g, ' ')
+            .trim();
+        const parts = cleaned.split(' ').filter(Boolean);
+        if (parts.length <= 2) return cleaned;
+        return parts.slice(0, 2).join(' ');
+    };
 
     return (
         <div className="space-y-4 max-w-[1920px] mx-auto relative min-h-[800px]">
@@ -2331,16 +2966,31 @@ export const CommandView = () => {
             {/* 2. MARKET CONTEXT (Real Evidence) */}
             <MarketContextPanel macro={macro} assets={assets} />
 
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 h-[calc(100vh-280px)] min-h-[500px]">
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 h-[calc(100vh-240px)] min-h-[500px]">
 
                 {/* UNIFIED SCANNER - Full Width or with Detail Panel */}
-                <div className={cn("flex flex-col gap-4 transition-all duration-300", selectedAssetData ? "lg:col-span-8" : "lg:col-span-12")}>
+                <div className={cn("flex flex-col gap-4 transition-all duration-300 min-h-0", selectedAssetData ? "lg:col-span-8" : "lg:col-span-12")}>
                     <Card className="flex-1 bg-gray-900 border-gray-800 overflow-hidden flex flex-col">
                         <CardHeader className="py-3 px-4 border-b border-gray-800 bg-gray-900 flex flex-col gap-3">
                             <div className="flex flex-row items-center justify-between">
                                 <div className="flex items-center gap-3">
                                     <Search className="w-4 h-4 text-purple-500" />
                                     <CardTitle className="text-sm font-bold text-gray-200 uppercase tracking-wider">Live Opportunity Scanner</CardTitle>
+                                    <Button
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={cycleRadarMode}
+                                        className={cn(
+                                            "h-7 text-[10px] font-bold border-gray-800",
+                                            radarMode === 'CONSERVATIVE'
+                                                ? "bg-green-950/10 text-green-300 hover:bg-green-900/20"
+                                                : radarMode === 'BALANCED'
+                                                    ? "bg-purple-950/10 text-purple-300 hover:bg-purple-900/20"
+                                                    : "bg-amber-950/10 text-amber-300 hover:bg-amber-900/20"
+                                        )}
+                                    >
+                                        MODE: {radarMode}
+                                    </Button>
                                 </div>
                                 {/* STATUS INDICATORS */}
                                 <div className="flex items-center gap-4 text-[10px] font-mono text-gray-500">
@@ -2414,6 +3064,93 @@ export const CommandView = () => {
 
                                     <span className="text-xs text-gray-600 px-1">|</span>
                                     <span className="text-xs text-gray-400">Selected: <span className="text-white font-bold">{selectedAssets.size}</span></span>
+
+                                    <div className="flex items-center gap-2 px-3 border-l border-gray-800">
+                                        <input
+                                            value={filterText}
+                                            onChange={(e) => setFilterText(e.target.value)}
+                                            placeholder="Filter... (symbol, class, micro, meso, risk)"
+                                            className="w-56 bg-gray-900 border border-gray-800 text-xs text-white px-2 py-1 rounded focus:border-purple-500 outline-none"
+                                        />
+                                        <select
+                                            value={filterClass}
+                                            onChange={(e) => setFilterClass(e.target.value)}
+                                            aria-label="Filter asset class"
+                                            title="Filter asset class"
+                                            className="bg-gray-900 border border-gray-800 text-xs text-white px-2 py-1 rounded focus:border-purple-500 outline-none"
+                                        >
+                                            <option value="ALL">Class: All</option>
+                                            {assetClassOptions.map((c) => (
+                                                <option key={c} value={c}>{c}</option>
+                                            ))}
+                                        </select>
+                                        <select
+                                            value={filterMicro}
+                                            onChange={(e) => setFilterMicro(e.target.value as typeof filterMicro)}
+                                            aria-label="Filter micro action"
+                                            title="Filter micro action"
+                                            className="bg-gray-900 border border-gray-800 text-xs text-white px-2 py-1 rounded focus:border-purple-500 outline-none"
+                                        >
+                                            <option value="ALL">Micro: All</option>
+                                            <option value="EXECUTE">Micro: EXECUTE</option>
+                                            <option value="WAIT">Micro: WAIT</option>
+                                            <option value="AVOID">Micro: NO-TRADE</option>
+                                        </select>
+                                        <select
+                                            value={filterScenario}
+                                            onChange={(e) => setFilterScenario(e.target.value as typeof filterScenario)}
+                                            aria-label="Filter scenario"
+                                            title="Filter scenario"
+                                            className="bg-gray-900 border border-gray-800 text-xs text-white px-2 py-1 rounded focus:border-purple-500 outline-none"
+                                        >
+                                            <option value="ALL">Scenario: All</option>
+                                            <option value="PRONTO">Scenario: PRONTO</option>
+                                            <option value="DESENVOLVENDO">Scenario: DESENVOLVENDO</option>
+                                            <option value="CONTRA">Scenario: CONTRA</option>
+                                        </select>
+                                        <select
+                                            value={filterRisk}
+                                            onChange={(e) => setFilterRisk(e.target.value as typeof filterRisk)}
+                                            aria-label="Filter risk"
+                                            title="Filter risk"
+                                            className="bg-gray-900 border border-gray-800 text-xs text-white px-2 py-1 rounded focus:border-purple-500 outline-none"
+                                        >
+                                            <option value="ALL">Risk: All</option>
+                                            <option value="LOW">Risk: LOW</option>
+                                            <option value="MED">Risk: MED</option>
+                                            <option value="HIGH">Risk: HIGH</option>
+                                        </select>
+                                        <select
+                                            value={sortBy}
+                                            onChange={(e) => setSortBy(e.target.value as typeof sortBy)}
+                                            aria-label="Sort rows"
+                                            title="Sort rows"
+                                            className="bg-gray-900 border border-gray-800 text-xs text-white px-2 py-1 rounded focus:border-purple-500 outline-none"
+                                        >
+                                            <option value="trust">Sort: Final</option>
+                                            <option value="score">Sort: Scan</option>
+                                            <option value="rr">Sort: RR</option>
+                                            <option value="vol">Sort: Vol</option>
+                                            <option value="rsi">Sort: RSI</option>
+                                            <option value="rvol">Sort: RVOL</option>
+                                        </select>
+                                        <Button
+                                            type="button"
+                                            variant="ghost"
+                                            size="sm"
+                                            className="h-7 text-[10px] text-gray-400 hover:text-white"
+                                            onClick={() => {
+                                                setFilterText('');
+                                                setFilterClass('ALL');
+                                                setFilterMicro('ALL');
+                                                setFilterScenario('ALL');
+                                                setFilterRisk('ALL');
+                                                setSortBy('trust');
+                                            }}
+                                        >
+                                            Reset
+                                        </Button>
+                                    </div>
                                 </div>
 
                                 <Button
@@ -2425,18 +3162,150 @@ export const CommandView = () => {
                                     <Briefcase className="w-3 h-3 mr-1.5" /> Send to Incubator
                                 </Button>
                             </div>
+
+                            <div className={cn("grid gap-2", radarMode === 'CONSERVATIVE' ? "grid-cols-1" : "grid-cols-1 md:grid-cols-2")}> 
+                                <div className="rounded-lg border border-green-900/30 bg-green-950/10 p-2">
+                                    <div className="flex items-center justify-between">
+                                        <div className="text-[10px] font-bold uppercase tracking-wider text-green-300">Top Garantido (1–3)</div>
+                                        <div className="text-[10px] font-mono text-gray-400">agora</div>
+                                    </div>
+                                    <div className="mt-2 flex flex-wrap gap-2">
+                                        {topGuaranteed.length === 0 ? (
+                                            <div className="text-[10px] font-mono text-gray-500">Sem picks LOW risk com EXECUTE+PRONTO.</div>
+                                        ) : (
+                                            topGuaranteed.map(r => (
+                                                <button
+                                                    key={r.symbol}
+                                                    onClick={() => setSelectedScannerAsset(r.symbol)}
+                                                    className="text-left rounded border border-green-900/40 bg-gray-950/40 px-2 py-1 hover:bg-gray-900/60 transition-colors"
+                                                >
+                                                    <div className="flex items-center gap-2">
+                                                        <span className="text-xs font-bold text-gray-100">{r.displaySymbol}</span>
+                                                        {shortInstrumentName(r.symbol, r.name) ? (
+                                                            <span className="text-[10px] text-gray-500">— {shortInstrumentName(r.symbol, r.name)}</span>
+                                                        ) : null}
+                                                        <span className="text-[9px] font-bold px-1 py-0.5 rounded border bg-gray-800/40 text-gray-300 border-gray-700/40" title={r.symbol}>
+                                                            {instrumentTypeLabel(r.symbol)}
+                                                        </span>
+                                                        <span className="text-[9px] font-bold px-1 py-0.5 rounded border bg-gray-800/40 text-gray-300 border-gray-700/40 font-mono tabular-nums" title="Scan score">
+                                                            S {r.score}
+                                                        </span>
+                                                        <span className={cn(
+                                                            "text-[9px] font-bold px-1 py-0.5 rounded border",
+                                                            r.signal === 'LONG'
+                                                                ? "bg-green-500/10 text-green-300 border-green-500/20"
+                                                                : "bg-red-500/10 text-red-300 border-red-500/20"
+                                                        )}>{r.signal}</span>
+                                                        <span className="text-[9px] font-bold px-1 py-0.5 rounded border bg-green-500/10 text-green-300 border-green-500/20">EXECUTE</span>
+                                                        <span className="text-[9px] font-bold px-1 py-0.5 rounded border bg-green-500/10 text-green-300 border-green-500/20">PRONTO</span>
+                                                        <span className="text-[9px] font-bold px-1 py-0.5 rounded border bg-gray-700/20 text-gray-300 border-gray-700/30">RR {r.rr}</span>
+                                                        <span className="text-[9px] font-bold px-1 py-0.5 rounded border bg-green-500/10 text-green-300 border-green-500/20">LOW</span>
+                                                    </div>
+                                                    <div className="mt-0.5 text-[10px] font-mono text-gray-500 flex items-center gap-2">
+                                                        <span>Final {r.trustScore ?? 'N/A'}</span>
+                                                        <span className="text-gray-700">|</span>
+                                                        <span className="text-gray-400">{r.symbol}</span>
+                                                    </div>
+                                                </button>
+                                            ))
+                                        )}
+                                    </div>
+                                </div>
+
+                                {radarMode !== 'CONSERVATIVE' && (
+                                <div className="rounded-lg border border-purple-900/30 bg-purple-950/10 p-2">
+                                    <div className="flex items-center justify-between">
+                                        <div className="text-[10px] font-bold uppercase tracking-wider text-purple-300">Muito Confiáveis (5–10)</div>
+                                        <div className="text-[10px] font-mono text-gray-400">lista</div>
+                                    </div>
+                                    <div className="mt-2 flex flex-wrap gap-2">
+                                        {veryReliable.length === 0 ? (
+                                            <div className="text-[10px] font-mono text-gray-500">Sem candidatos MICRO confiáveis no momento.</div>
+                                        ) : (
+                                            veryReliable.map(r => (
+                                                <button
+                                                    key={r.symbol}
+                                                    onClick={() => setSelectedScannerAsset(r.symbol)}
+                                                    className="text-left rounded border border-purple-900/40 bg-gray-950/40 px-2 py-1 hover:bg-gray-900/60 transition-colors"
+                                                >
+                                                    <div className="flex items-center gap-2">
+                                                        <span className="text-xs font-bold text-gray-100">{r.displaySymbol}</span>
+                                                        {shortInstrumentName(r.symbol, r.name) ? (
+                                                            <span className="text-[10px] text-gray-500">— {shortInstrumentName(r.symbol, r.name)}</span>
+                                                        ) : null}
+                                                        <span className="text-[9px] font-bold px-1 py-0.5 rounded border bg-gray-800/40 text-gray-300 border-gray-700/40" title={r.symbol}>
+                                                            {instrumentTypeLabel(r.symbol)}
+                                                        </span>
+                                                        <span className="text-[9px] font-bold px-1 py-0.5 rounded border bg-gray-800/40 text-gray-300 border-gray-700/40 font-mono tabular-nums" title="Scan score">
+                                                            S {r.score}
+                                                        </span>
+                                                        <span className={cn(
+                                                            "text-[9px] font-bold px-1 py-0.5 rounded border",
+                                                            r.signal === 'LONG'
+                                                                ? "bg-green-500/10 text-green-300 border-green-500/20"
+                                                                : "bg-red-500/10 text-red-300 border-red-500/20"
+                                                        )}>{r.signal}</span>
+                                                        {r.microAction ? (
+                                                            <span className={cn(
+                                                                "text-[9px] font-bold px-1 py-0.5 rounded border",
+                                                                r.microAction === 'EXECUTE'
+                                                                    ? "bg-green-500/10 text-green-300 border-green-500/20"
+                                                                    : "bg-amber-500/10 text-amber-300 border-amber-500/20"
+                                                            )}>{r.microAction}</span>
+                                                        ) : null}
+                                                        {r.scenarioStatus ? (
+                                                            <span className={cn(
+                                                                "text-[9px] font-bold px-1 py-0.5 rounded border",
+                                                                r.scenarioStatus === 'PRONTO'
+                                                                    ? "bg-green-500/10 text-green-300 border-green-500/20"
+                                                                    : r.scenarioStatus === 'DESENVOLVENDO'
+                                                                        ? "bg-amber-500/10 text-amber-300 border-amber-500/20"
+                                                                        : "bg-red-500/10 text-red-300 border-red-500/20"
+                                                            )}>{r.scenarioStatus}</span>
+                                                        ) : null}
+                                                        <span className="text-[9px] font-bold px-1 py-0.5 rounded border bg-gray-700/20 text-gray-300 border-gray-700/30">RR {r.rr}</span>
+                                                        {r.riskLabel ? (
+                                                            <span className={cn(
+                                                                "text-[9px] font-bold px-1 py-0.5 rounded border",
+                                                                r.riskLabel === 'LOW'
+                                                                    ? "bg-green-500/10 text-green-300 border-green-500/20"
+                                                                    : r.riskLabel === 'MED'
+                                                                        ? "bg-amber-500/10 text-amber-300 border-amber-500/20"
+                                                                        : "bg-red-500/10 text-red-300 border-red-500/20"
+                                                            )}>{r.riskLabel}</span>
+                                                        ) : null}
+                                                    </div>
+                                                    <div className="mt-0.5 text-[10px] font-mono text-gray-500 flex items-center gap-2">
+                                                        <span>Final {r.trustScore ?? 'N/A'}</span>
+                                                        <span className="text-gray-700">|</span>
+                                                        <span className="text-gray-400">{r.symbol}</span>
+                                                    </div>
+                                                </button>
+                                            ))
+                                        )}
+                                    </div>
+                                </div>
+                                )}
+                            </div>
                         </CardHeader>
 
-                        <CardContent className="p-0 overflow-y-auto bg-gray-900">
-                            <Table>
+                        <CardContent ref={scannerTableScrollRef} onScroll={onScannerTableScroll} className="p-0 flex-1 min-h-0 overflow-auto bg-gray-900">
+                            <Table className="min-w-[1180px]">
                                 <TableHeader className="bg-gray-950 text-[10px] uppercase sticky top-0 z-10">
                                     <TableRow className="hover:bg-transparent border-gray-800">
                                         <TableHead className="h-9 w-8 text-center text-gray-600">#</TableHead>
-                                        <TableHead className="h-9 text-gray-400 font-bold w-14">Asset</TableHead>
+                                        <TableHead className="h-9 text-gray-400 font-bold w-56">Asset</TableHead>
                                         <TableHead className="h-9 text-cyan-400 font-bold w-20">Price</TableHead>
                                         <TableHead className="h-9 text-blue-400 font-bold w-10 text-center">RSI</TableHead>
                                         <TableHead className="h-9 text-yellow-400 font-bold w-10 text-center">RV</TableHead>
-                                        <TableHead className="h-9 text-gray-400 font-bold text-center w-12">Score</TableHead>
+                                        <TableHead className="h-9 text-gray-400 font-bold text-center w-16" title="Scan score (price/volume/liquidity confluence)">
+                                            <div className="leading-none">Scan</div>
+                                            <div className="text-[9px] text-gray-600 font-normal normal-case">score</div>
+                                        </TableHead>
+                                        <TableHead className="h-9 text-gray-200 font-bold text-center w-16" title="Final score (Macro + MESO + MICRO overlays)">
+                                            <div className="leading-none">Final</div>
+                                            <div className="text-[9px] text-gray-600 font-normal normal-case">score</div>
+                                        </TableHead>
                                         <TableHead className="h-9 text-gray-400 font-bold w-16">Trend</TableHead>
                                         <TableHead className="h-9 text-gray-400 font-bold w-14">Signal</TableHead>
                                         <TableHead className="h-9 text-cyan-500 font-bold w-10">TF</TableHead>
@@ -2451,22 +3320,38 @@ export const CommandView = () => {
                                 <TableBody className="text-xs font-mono">
                                     {loading ? (
                                         <TableRow>
-                                            <TableCell colSpan={10} className="h-24 text-center text-gray-500">Connecting to global markets...</TableCell>
+                                            <TableCell colSpan={16} className="h-24 text-center text-gray-500">Connecting to global markets...</TableCell>
                                         </TableRow>
-                                    ) : scannerList.length === 0 ? (
+                                    ) : tableRows.length === 0 ? (
                                         <TableRow>
-                                            <TableCell colSpan={10} className="h-24 text-center text-gray-500">No high-confidence signals found based on current scoring.</TableCell>
+                                            <TableCell colSpan={16} className="h-24 text-center text-gray-500">
+                                                <div>No rows match current filters.</div>
+                                                {microCandidateCounts.total > 0 && (
+                                                    <div className="mt-1 text-[11px] font-mono text-gray-600">
+                                                        MICRO candidates: {microCandidateCounts.total} (EXECUTE {microCandidateCounts.execute}, WAIT {microCandidateCounts.wait}, AVOID {microCandidateCounts.avoid}).
+                                                    </div>
+                                                )}
+                                            </TableCell>
                                         </TableRow>
                                     ) : (
-                                        scannerList.map((row) => (
-                                            <TableRow
-                                                key={row.symbol}
-                                                className={cn(
-                                                    "border-gray-800 cursor-pointer transition-colors h-10 group",
-                                                    selectedScannerAsset === row.symbol ? "bg-purple-900/40" : "hover:bg-gray-800/40"
-                                                )}
-                                                onClick={() => setSelectedScannerAsset(row.symbol)}
-                                            >
+                                        <>
+                                            {virtualScanner.topPad > 0 ? (
+                                                <TableRow aria-hidden="true" className="border-0 hover:bg-transparent">
+                                                    <TableCell colSpan={16} className="p-0" style={{ height: virtualScanner.topPad }} />
+                                                </TableRow>
+                                            ) : null}
+
+                                            {virtualScanner.rows.map((row, i) => (
+                                                <TableRow
+                                                    ref={i === 0 ? measureScannerTableRow : undefined}
+                                                    data-testid="market-watch-item"
+                                                    key={row.symbol}
+                                                    className={cn(
+                                                        "border-gray-800 cursor-pointer transition-colors h-12 group",
+                                                        selectedScannerAsset === row.symbol ? "bg-purple-900/40" : "hover:bg-gray-800/40"
+                                                    )}
+                                                    onClick={() => setSelectedScannerAsset(row.symbol)}
+                                                >
                                                 <TableCell className="text-center p-0" onClick={(e) => e.stopPropagation()}>
                                                     <div
                                                         onClick={(e) => toggleSelection(row.symbol, e)}
@@ -2479,9 +3364,82 @@ export const CommandView = () => {
                                                     </div>
                                                 </TableCell>
                                                 <TableCell className="font-bold text-gray-200 group-hover:text-white transition-colors">
-                                                    <div>
-                                                        {row.displaySymbol}
-                                                        <div className="text-[9px] text-gray-600 font-normal md:hidden">{row.name?.substring(0, 10)}</div>
+                                                    <div className="flex flex-col leading-tight">
+                                                        <div className="flex items-center gap-1 flex-wrap">
+                                                            <span>{row.displaySymbol}</span>
+                                                            {shortInstrumentName(row.symbol, row.name) ? (
+                                                                <span className="text-[10px] font-normal text-gray-500">— {shortInstrumentName(row.symbol, row.name)}</span>
+                                                            ) : null}
+                                                            <span className="text-[9px] font-bold px-1 py-0.5 rounded bg-gray-800/40 text-gray-300 border border-gray-700/40" title={row.symbol}>
+                                                                {instrumentTypeLabel(row.symbol)}
+                                                            </span>
+                                                            <span className={cn(
+                                                                "text-[9px] font-bold px-1 py-0.5 rounded border font-mono tabular-nums",
+                                                                row.score >= 80 ? "bg-green-500/10 text-green-300 border-green-500/20" :
+                                                                    row.score >= 55 ? "bg-amber-500/10 text-amber-300 border-amber-500/20" :
+                                                                        "bg-gray-800/40 text-gray-300 border-gray-700/40"
+                                                            )} title="Scan score">
+                                                                S {row.score}
+                                                            </span>
+                                                            <span className={cn(
+                                                                "text-[9px] font-bold px-1 py-0.5 rounded border font-mono tabular-nums",
+                                                                (row.trustScore ?? 0) >= 80 ? "bg-green-500/10 text-green-300 border-green-500/20" :
+                                                                    (row.trustScore ?? 0) >= 65 ? "bg-amber-500/10 text-amber-300 border-amber-500/20" :
+                                                                        "bg-gray-800/40 text-gray-300 border-gray-700/40"
+                                                            )} title="Final score">
+                                                                F {row.trustScore ?? '-'}
+                                                            </span>
+                                                        {row.levelSource === 'MICRO' ? (
+                                                            <span className="text-[9px] font-bold px-1 py-0.5 rounded bg-purple-500/15 text-purple-300 border border-purple-500/20">MICRO</span>
+                                                        ) : (
+                                                            <span className="text-[9px] font-bold px-1 py-0.5 rounded bg-gray-700/20 text-gray-500 border border-gray-700/30">SCAN</span>
+                                                        )}
+                                                        {row.mesoBlocked ? (
+                                                            <span className="text-[9px] font-bold px-1 py-0.5 rounded bg-red-500/10 text-red-300 border border-red-500/20">BLOCK</span>
+                                                        ) : row.mesoDirection ? (
+                                                            <span className={cn(
+                                                                "text-[9px] font-bold px-1 py-0.5 rounded border",
+                                                                row.mesoDirection === 'LONG'
+                                                                    ? "bg-green-500/10 text-green-300 border-green-500/20"
+                                                                    : "bg-red-500/10 text-red-300 border-red-500/20"
+                                                            )}>MESO {row.mesoDirection}</span>
+                                                        ) : null}
+                                                        {row.microAction ? (
+                                                            <span className={cn(
+                                                                "text-[9px] font-bold px-1 py-0.5 rounded border",
+                                                                row.microAction === 'EXECUTE'
+                                                                    ? "bg-green-500/10 text-green-300 border-green-500/20"
+                                                                    : row.microAction === 'WAIT'
+                                                                        ? "bg-amber-500/10 text-amber-300 border-amber-500/20"
+                                                                        : "bg-gray-700/20 text-gray-400 border-gray-700/30"
+                                                            )}>{row.microAction === 'AVOID' ? 'NO-TRADE' : row.microAction}</span>
+                                                        ) : null}
+                                                        {row.scenarioStatus ? (
+                                                            <span className={cn(
+                                                                "text-[9px] font-bold px-1 py-0.5 rounded border",
+                                                                row.scenarioStatus === 'PRONTO'
+                                                                    ? "bg-green-500/10 text-green-300 border-green-500/20"
+                                                                    : row.scenarioStatus === 'DESENVOLVENDO'
+                                                                        ? "bg-amber-500/10 text-amber-300 border-amber-500/20"
+                                                                        : "bg-red-500/10 text-red-300 border-red-500/20"
+                                                            )}>{row.scenarioStatus}</span>
+                                                        ) : null}
+                                                        {row.riskLabel ? (
+                                                            <span className={cn(
+                                                                "text-[9px] font-bold px-1 py-0.5 rounded border",
+                                                                row.riskLabel === 'LOW'
+                                                                    ? "bg-green-500/10 text-green-300 border-green-500/20"
+                                                                    : row.riskLabel === 'MED'
+                                                                        ? "bg-amber-500/10 text-amber-300 border-amber-500/20"
+                                                                        : "bg-red-500/10 text-red-300 border-red-500/20"
+                                                            )}>RISK {row.riskLabel}</span>
+                                                        ) : null}
+                                                        </div>
+                                                        <div className="mt-0.5 text-[9px] text-gray-500 font-mono tabular-nums flex items-center gap-2">
+                                                            <span className="text-gray-400">{row.symbol}</span>
+                                                            <span className="text-gray-600">|</span>
+                                                            <span className="uppercase">{row.assetClass || '—'}</span>
+                                                        </div>
                                                     </div>
                                                 </TableCell>
                                                 <TableCell>
@@ -2537,6 +3495,16 @@ export const CommandView = () => {
                                                         {row.score}
                                                     </span>
                                                 </TableCell>
+                                                <TableCell className="text-center">
+                                                    <span className={cn(
+                                                        "px-1.5 py-0.5 rounded text-[10px] font-bold border",
+                                                        (row.trustScore ?? 0) > 80 ? "bg-green-500/15 text-green-300 border-green-500/20" :
+                                                            (row.trustScore ?? 0) > 65 ? "bg-yellow-500/10 text-yellow-200 border-yellow-500/20" :
+                                                                "bg-gray-800/40 text-gray-300 border-gray-700/40"
+                                                    )}>
+                                                        {row.trustScore ?? '-'}
+                                                    </span>
+                                                </TableCell>
                                                 <TableCell>
                                                     <Sparkline
                                                         data={(Array.isArray(row.history) && row.history.length > 2) ? row.history.slice(-12) : [row.price, row.price]}
@@ -2578,8 +3546,15 @@ export const CommandView = () => {
                                                         <Zap className="w-3 h-3" />
                                                     </Button>
                                                 </TableCell>
-                                            </TableRow>
-                                        ))
+                                                </TableRow>
+                                            ))}
+
+                                            {virtualScanner.bottomPad > 0 ? (
+                                                <TableRow aria-hidden="true" className="border-0 hover:bg-transparent">
+                                                    <TableCell colSpan={16} className="p-0" style={{ height: virtualScanner.bottomPad }} />
+                                                </TableRow>
+                                            ) : null}
+                                        </>
                                     )}
                                 </TableBody>
                             </Table>
@@ -2589,7 +3564,7 @@ export const CommandView = () => {
 
                 {/* DETAIL PANEL - Only shows when asset is selected */}
                 {selectedAssetData && (
-                    <div className="lg:col-span-4 flex flex-col gap-4">
+                    <div className="lg:col-span-4 flex flex-col gap-4 min-h-0">
                         <AssetDetailPanel
                             key={selectedAssetData.symbol}
                             asset={selectedAssetData}

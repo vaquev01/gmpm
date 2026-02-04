@@ -4,17 +4,15 @@ import React, { useState, useEffect } from 'react';
 import { getPaperAccount, resetPaperAccount, PaperAccount } from '@/lib/paperTradingEngine';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { RefreshCw, Play, RotateCcw, DollarSign, Wallet } from 'lucide-react';
+import { RotateCcw, DollarSign, Wallet } from 'lucide-react';
 
 export const PaperTradingView = () => {
     const [account, setAccount] = useState<PaperAccount | null>(null);
-    const [lastUpdate, setLastUpdate] = useState(() => Date.now());
 
     useEffect(() => {
         // Polling loop for real-time order updates
         const interval = setInterval(() => {
             setAccount(getPaperAccount());
-            setLastUpdate(Date.now());
         }, 1000);
         return () => clearInterval(interval);
     }, []);

@@ -14,14 +14,13 @@ import {
 } from '@/lib/signalTracker';
 import {
     runMonteCarloSimulation,
-    calculateExpectancy,
     calculateKellyCriterion,
     type MonteCarloResult,
 } from '@/lib/monteCarloEngine';
 import { loadLearningState } from '@/lib/continuousLearning';
 import {
-    Shield, AlertTriangle, TrendingUp, Target, BarChart3,
-    RefreshCw, Activity, PieChart, Zap, DollarSign, Flame
+    Shield, AlertTriangle, BarChart3,
+    RefreshCw, Activity, PieChart, Zap, Flame
 } from 'lucide-react';
 import { runStressTest, type StressResult } from '@/lib/stressTestEngine';
 
@@ -142,6 +141,30 @@ export const RiskDashboardView = () => {
                     <div className="bg-gray-900/50 border border-gray-800 rounded-lg p-4 text-center">
                         <div className="text-xs text-gray-400 mb-1">Losses</div>
                         <div className="text-2xl font-bold text-red-400">{trackingSummary.totalLosses}</div>
+                    </div>
+                </div>
+            )}
+
+            {/* Kelly Sizing */}
+            {kelly && (
+                <div className="bg-gray-900/50 border border-gray-800 rounded-lg p-4">
+                    <h3 className="text-emerald-400 font-bold mb-3 flex items-center gap-2">
+                        <Zap className="w-4 h-4" />
+                        KELLY SIZING
+                    </h3>
+                    <div className="grid grid-cols-3 gap-3">
+                        <div className="bg-gray-800/40 rounded p-3 text-center">
+                            <div className="text-xs text-gray-400 mb-1">Full Kelly</div>
+                            <div className="text-lg font-bold text-emerald-300">{kelly.kelly.toFixed(1)}%</div>
+                        </div>
+                        <div className="bg-gray-800/40 rounded p-3 text-center">
+                            <div className="text-xs text-gray-400 mb-1">Half Kelly</div>
+                            <div className="text-lg font-bold text-emerald-300">{kelly.halfKelly.toFixed(1)}%</div>
+                        </div>
+                        <div className="bg-gray-800/40 rounded p-3 text-center">
+                            <div className="text-xs text-gray-400 mb-1">Quarter Kelly</div>
+                            <div className="text-lg font-bold text-emerald-300">{kelly.quarterKelly.toFixed(1)}%</div>
+                        </div>
                     </div>
                 </div>
             )}

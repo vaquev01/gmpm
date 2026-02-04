@@ -1,7 +1,6 @@
 
 import { BacktestCandle } from './backtestEngine';
 import { RealQuote, MacroData } from './realEngine';
-import { MarketData } from '@/types';
 
 // ===== STRATEGY ADAPTER =====
 // Bridges historical data (BacktestCandle) to Real Engine requirements (RealQuote, Macro etc.)

@@ -111,10 +111,6 @@ function isBearishCandle(candle: Candle): boolean {
     return candle.close < candle.open;
 }
 
-function getCandleBody(candle: Candle): number {
-    return Math.abs(candle.close - candle.open);
-}
-
 function getCandleRange(candle: Candle): number {
     return candle.high - candle.low;
 }
@@ -170,6 +166,7 @@ export function detectOrderBlocks(candles: Candle[], currentPrice: number): Orde
 }
 
 export function detectFVGs(candles: Candle[], currentPrice: number): FairValueGap[] {
+    void currentPrice;
     const fvgs: FairValueGap[] = [];
 
     for (let i = 2; i < candles.length; i++) {

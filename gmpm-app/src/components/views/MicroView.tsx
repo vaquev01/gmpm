@@ -76,6 +76,8 @@ interface TechnicalAnalysis {
 interface MicroAnalysis {
     symbol: string;
     displaySymbol: string;
+    name?: string;
+    assetClass?: string;
     price: number;
     technical: TechnicalAnalysis;
     setups: Setup[];
@@ -83,6 +85,12 @@ interface MicroAnalysis {
         action: 'EXECUTE' | 'WAIT' | 'AVOID';
         reason: string;
         bestSetup: Setup | null;
+    };
+    scenarioAnalysis?: {
+        status: 'PRONTO' | 'DESENVOLVENDO' | 'CONTRA';
+        statusReason: string;
+        entryQuality: 'OTIMO' | 'BOM' | 'RUIM';
+        timing: 'AGORA' | 'AGUARDAR' | 'PERDIDO';
     };
 }
 
@@ -395,22 +403,114 @@ const SetupCard = ({ setup, expanded, onToggle }: { setup: Setup; expanded: bool
 const AnalysisCard = ({ analysis }: { analysis: MicroAnalysis }) => {
     const [expanded, setExpanded] = useState(false);
     const [activeTab, setActiveTab] = useState('overview');
+
+    const best = analysis.recommendation.bestSetup;
+    const fallbackInstrumentName = (symbol: string) => {
+        const map: Record<string, string> = {
+            'GC=F': 'Gold Futures',
+            'SI=F': 'Silver Futures',
+            'CL=F': 'Crude Oil Futures',
+            'BZ=F': 'Brent Crude Futures',
+            'NG=F': 'Natural Gas Futures',
+            'RB=F': 'RBOB Gasoline Futures',
+            'HG=F': 'Copper Futures',
+            'ZC=F': 'Corn Futures',
+            'ZW=F': 'Wheat Futures',
+            'ZS=F': 'Soybean Futures',
+        };
+        return map[symbol] || '';
+    };
+
+    const fallbackInstrumentShortName = (symbol: string) => {
+        const map: Record<string, string> = {
+            'GC=F': 'Gold',
+            'SI=F': 'Silver',
+            'CL=F': 'Crude',
+            'BZ=F': 'Brent',
+            'NG=F': 'NatGas',
+            'RB=F': 'Gasoline',
+            'HG=F': 'Copper',
+            'ZC=F': 'Corn',
+            'ZW=F': 'Wheat',
+            'ZS=F': 'Soybean',
+        };
+        return map[symbol] || '';
+    };
+
+    const shortInstrumentName = (symbol: string, name?: string) => {
+        const fromMap = fallbackInstrumentShortName(symbol);
+        if (fromMap) return fromMap;
+        const raw = (name || fallbackInstrumentName(symbol) || '').trim();
+        if (!raw) return '';
+        const cleaned = raw
+            .replace(/\bFutures?\b/gi, '')
+            .replace(/\bIndex\b/gi, '')
+            .replace(/\bETF\b/gi, '')
+            .replace(/\s+/g, ' ')
+            .trim();
+        const parts = cleaned.split(' ').filter(Boolean);
+        if (parts.length <= 2) return cleaned;
+        return parts.slice(0, 2).join(' ');
+    };
+    const instrumentType = analysis.symbol.endsWith('-USD') ? 'CRYPTO'
+        : analysis.symbol.endsWith('=X') ? 'FX'
+            : analysis.symbol.endsWith('=F') ? 'FUT'
+                : analysis.symbol.startsWith('^') ? 'INDEX'
+                    : 'SPOT';
+    const timing = analysis.recommendation.action === 'EXECUTE'
+        ? 'AGORA'
+        : analysis.scenarioAnalysis?.timing === 'PERDIDO'
+            ? 'PERDIDO'
+            : 'AGUARDAR';
+    const statusReason = analysis.scenarioAnalysis?.statusReason;
     
     return (
         <Card className={cn("border", actionColors[analysis.recommendation.action])}>
             <CardHeader className="pb-2">
                 <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
-                        <div className="text-2xl font-bold text-gray-100">{analysis.displaySymbol}</div>
+                        <div className="flex items-baseline gap-2">
+                            <div className="text-2xl font-bold text-gray-100">{analysis.displaySymbol}</div>
+                            {shortInstrumentName(analysis.symbol, analysis.name) ? (
+                                <div className="text-[12px] text-gray-500">— {shortInstrumentName(analysis.symbol, analysis.name)}</div>
+                            ) : null}
+                        </div>
                         <Badge className={cn("text-sm", actionColors[analysis.recommendation.action])}>
-                            {analysis.recommendation.action}
+                            {analysis.recommendation.action === 'AVOID' ? 'NO-TRADE' : analysis.recommendation.action}
                         </Badge>
+                        {best ? (
+                            <div className="hidden md:flex items-center gap-2 text-[10px] font-mono text-gray-400">
+                                <span className="px-1.5 py-0.5 rounded border border-gray-700/50 bg-gray-900/40 text-cyan-300">{best.timeframe}</span>
+                                <span className="px-1.5 py-0.5 rounded border border-gray-700/50 bg-gray-900/40 text-purple-300">RR {best.riskReward.toFixed(1)}</span>
+                                <span className={cn(
+                                    "px-1.5 py-0.5 rounded border border-gray-700/50 bg-gray-900/40",
+                                    best.technicalScore >= 80 ? 'text-green-300' : best.technicalScore >= 65 ? 'text-yellow-300' : 'text-red-300'
+                                )}>
+                                    Score {best.technicalScore}
+                                </span>
+                                <span className="px-1.5 py-0.5 rounded border border-gray-700/50 bg-gray-900/40 text-amber-300">Conf {best.confluences.length}</span>
+                            </div>
+                        ) : null}
                     </div>
                     <div className="text-right">
-                        <div className="text-lg font-mono text-gray-200">{analysis.price.toFixed(4)}</div>
+                        <div className="text-lg font-mono tabular-nums text-gray-200">{analysis.price.toFixed(4)}</div>
                         <div className="text-[10px] text-gray-500">{analysis.setups.length} setup(s)</div>
                     </div>
                 </div>
+                <div className="mt-2 grid grid-cols-1 md:grid-cols-3 gap-2 text-[10px] font-mono text-gray-500">
+                    <div className="rounded border border-gray-800 bg-gray-950/30 px-2 py-1">
+                        <span className="text-gray-400">Instrument</span> {analysis.symbol} | {instrumentType} | {(analysis.assetClass || '—').toUpperCase()}
+                    </div>
+                    <div className="rounded border border-gray-800 bg-gray-950/30 px-2 py-1">
+                        <span className="text-gray-400">What to do</span> {analysis.recommendation.action === 'AVOID' ? 'NO-TRADE' : analysis.recommendation.action} • {timing}
+                    </div>
+                    <div className="rounded border border-gray-800 bg-gray-950/30 px-2 py-1 line-clamp-1" title={statusReason || ''}>
+                        <span className="text-gray-400">Why</span> {statusReason || analysis.recommendation.reason}
+                    </div>
+                </div>
+                {(analysis.name || fallbackInstrumentName(analysis.symbol)) ? (
+                    <div className="mt-2 text-[10px] text-gray-600">{analysis.name || fallbackInstrumentName(analysis.symbol)}</div>
+                ) : null}
                 <p className="text-sm text-gray-400 mt-2">{analysis.recommendation.reason}</p>
             </CardHeader>
             
@@ -546,7 +646,7 @@ export const MicroView = () => {
     const avoid = data.analyses.filter(a => a.recommendation.action === 'AVOID');
 
     return (
-        <div className="space-y-6 max-w-[1700px] mx-auto pb-20">
+        <div className="space-y-6 max-w-[1700px] mx-auto pb-20 h-[calc(100vh-140px)] overflow-y-auto pr-2">
             {/* Header */}
             <div className="flex items-center justify-between border-b border-gray-800 pb-4">
                 <div className="flex items-center gap-3">
@@ -596,7 +696,7 @@ export const MicroView = () => {
                             </div>
                             <div className="text-center">
                                 <div className="text-3xl font-bold text-gray-500">{avoid.length}</div>
-                                <div className="text-[10px] text-gray-500 uppercase">Avoid</div>
+                                <div className="text-[10px] text-gray-500 uppercase">No-Trade</div>
                             </div>
                         </div>
                         <div className="text-right">
@@ -648,6 +748,21 @@ export const MicroView = () => {
                         </div>
                     </CardContent>
                 </Card>
+            )}
+
+            {/* Avoid */}
+            {avoid.length > 0 && (
+                <div className="space-y-3">
+                    <div className="flex items-center gap-2 text-red-400">
+                        <AlertTriangle className="w-5 h-5" />
+                        <span className="text-sm font-bold uppercase tracking-wider">No-Trade / Blocked</span>
+                    </div>
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 opacity-90">
+                        {avoid.slice(0, 8).map(a => (
+                            <AnalysisCard key={a.symbol} analysis={a} />
+                        ))}
+                    </div>
+                </div>
             )}
         </div>
     );

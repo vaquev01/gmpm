@@ -160,15 +160,6 @@ function getWorstConfidence(...levels: ConfidenceLevel[]): ConfidenceLevel {
     return worst;
 }
 
-function getDataAge(timestamp: string | null | undefined): { ageMinutes: number; confidence: ConfidenceLevel } {
-    if (!timestamp) return { ageMinutes: Infinity, confidence: 'UNAVAILABLE' };
-    const age = (Date.now() - new Date(timestamp).getTime()) / 60000;
-    if (age < 5) return { ageMinutes: age, confidence: 'OK' };
-    if (age < 30) return { ageMinutes: age, confidence: 'PARTIAL' };
-    if (age < 120) return { ageMinutes: age, confidence: 'STALE' };
-    return { ageMinutes: age, confidence: 'SUSPECT' };
-}
-
 // =============================================================================
 // AXIS CALCULATORS
 // =============================================================================
@@ -629,7 +620,6 @@ function classifyRegime(axes: RegimeSnapshot['axes']): { regime: RegimeType; con
 function generateMesoTilts(regime: RegimeType, axes: RegimeSnapshot['axes']): MesoTilt[] {
     const tilts: MesoTilt[] = [];
     const D = axes.D.direction;
-    const V = axes.V.direction;
 
     switch (regime) {
         case 'GOLDILOCKS':
@@ -721,6 +711,8 @@ function generateMesoProhibitions(regime: RegimeType, axes: RegimeSnapshot['axes
 
 function generateAlerts(axes: RegimeSnapshot['axes'], regime: RegimeType): RegimeAlert[] {
     const alerts: RegimeAlert[] = [];
+
+    void regime;
 
     // Liquidity alerts (highest priority)
     if (axes.L.direction === '↓↓') {
@@ -955,7 +947,6 @@ function evaluateMesoGate(regime: RegimeSnapshot, trade: TradeContext): GateResu
     // Check prohibitions
     for (const prohibition of regime.mesoProhibitions) {
         const lower = prohibition.toLowerCase();
-        const tradeDesc = `${trade.direction} ${trade.symbol}`.toLowerCase();
 
         if (lower.includes('não') || lower.includes('not')) {
             if (lower.includes('risk') && trade.assetClass !== 'forex') {

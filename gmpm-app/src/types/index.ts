@@ -27,7 +27,7 @@ export interface FractalConcept {
 }
 
 
-export type ViewType = 'command' | 'macro' | 'meso' | 'lab' | 'factory' | 'incubator' | 'universe' | 'micro';
+export type ViewType = 'command' | 'macro' | 'meso' | 'micro' | 'liquidity' | 'lab' | 'factory' | 'incubator' | 'universe';
 
 export type FactoryTab = 'backtest' | 'paper' | 'learning' | 'risk';
 
@@ -73,6 +73,8 @@ export interface TrackedAsset {
     side: 'LONG' | 'SHORT';
     lots: number;
     // SCAN/MICRO data
+    scanScore?: number;
+    finalScore?: number;
     stopLoss?: number;
     takeProfit1?: number;
     takeProfit2?: number;

@@ -1,4 +1,6 @@
 import { NextResponse } from 'next/server';
+import { yahooFetchJson } from '@/lib/yahooClient';
+import { serverLog } from '@/lib/serverLogs';
 
 // ===== HISTORICAL DATA API =====
 // Fetches historical candles for backtesting
@@ -30,6 +32,23 @@ interface HistoricalData {
         maxDrawdown: number;
     };
 }
+
+type YahooChartResponse = {
+    chart?: {
+        result?: Array<{
+            timestamp?: number[];
+            indicators?: {
+                quote?: Array<{
+                    open?: Array<number | null>;
+                    high?: Array<number | null>;
+                    low?: Array<number | null>;
+                    close?: Array<number | null>;
+                    volume?: Array<number | null>;
+                }>;
+            };
+        }>;
+    };
+};
 
 // Period to Yahoo Finance range mapping
 const PERIOD_MAP: Record<string, { range: string; interval: string }> = {
@@ -76,18 +95,16 @@ export async function GET(request: Request) {
     try {
         const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=${periodConfig.interval}&range=${periodConfig.range}`;
 
-        const response = await fetch(url, {
-            headers: { 'User-Agent': 'GMPM/1.0' },
-        });
-
-        if (!response.ok) {
+        const y = await yahooFetchJson(url, 300_000);
+        if (!y.ok || !y.data) {
+            serverLog('warn', 'history_yahoo_fetch_failed', { symbol, period, status: y.status, cached: y.cached, stale: y.stale }, 'api/history');
             return NextResponse.json({
                 success: false,
                 error: `Failed to fetch data for ${symbol}`,
             }, { status: 500 });
         }
 
-        const data = await response.json();
+        const data = y.data as YahooChartResponse;
         const result = data.chart?.result?.[0];
 
         if (!result || !result.timestamp) {
@@ -111,28 +128,39 @@ export async function GET(request: Request) {
         const closes: number[] = [];
         const returns: number[] = [];
 
+        const open = quote.open || [];
+        const high = quote.high || [];
+        const low = quote.low || [];
+        const close = quote.close || [];
+        const volume = quote.volume || [];
+
+        const coalesceNum = (v: number | null | undefined, fallback: number) => (v == null ? fallback : v);
+        const coalesceVol = (v: number | null | undefined) => (v == null ? 0 : v);
+
         for (let i = 0; i < timestamps.length; i++) {
-            if (quote.open[i] != null && quote.close[i] != null) {
+            const o = open[i];
+            const c = close[i];
+            if (o != null && c != null) {
                 const date = new Date(timestamps[i] * 1000);
-                const close = quote.close[i];
+                const closePx = c;
 
                 if (closes.length > 0) {
                     const prevClose = closes[closes.length - 1];
-                    returns.push((close - prevClose) / prevClose);
+                    returns.push((closePx - prevClose) / prevClose);
                 }
 
-                closes.push(close);
+                closes.push(closePx);
 
                 candles.push({
                     date: date.toISOString().split('T')[0],
                     timestamp: timestamps[i] * 1000,
-                    open: quote.open[i],
-                    high: quote.high[i] || quote.open[i],
-                    low: quote.low[i] || quote.open[i],
-                    close,
-                    volume: quote.volume[i] || 0,
+                    open: o,
+                    high: coalesceNum(high[i], o),
+                    low: coalesceNum(low[i], o),
+                    close: closePx,
+                    volume: coalesceVol(volume[i]),
                     changePercent: closes.length > 1
-                        ? ((close - closes[closes.length - 2]) / closes[closes.length - 2]) * 100
+                        ? ((closePx - closes[closes.length - 2]) / closes[closes.length - 2]) * 100
                         : 0,
                 });
             }
@@ -167,7 +195,7 @@ export async function GET(request: Request) {
         });
 
     } catch (error) {
-        console.error('History API Error:', error);
+        serverLog('error', 'history_api_error', { symbol, period, error: String(error) }, 'api/history');
         return NextResponse.json({
             success: false,
             error: 'Failed to fetch historical data',
