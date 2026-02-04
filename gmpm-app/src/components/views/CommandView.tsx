@@ -92,6 +92,10 @@ interface ScoredAsset extends RealAssetData {
     mesoBlocked?: boolean;
     riskLabel?: 'LOW' | 'MED' | 'HIGH';
     trustScore?: number;
+    // Liquidity integration
+    liquidityScore?: number;
+    liquidityBehavior?: 'AGGRESSIVE_HUNTER' | 'SELECTIVE_HUNTER' | 'PASSIVE' | 'UNPREDICTABLE';
+    liquidityAlignment?: string;
     timeframe: string;      // H4, H1, M15
     confluenceCount: number; // Number of confluences > 60
     rvol: number; // Relative Volume
@@ -1962,6 +1966,18 @@ export const CommandView = () => {
             blockers: string[];
             catalysts: string[];
         };
+        liquidityAnalysis?: {
+            liquidityScore: number;
+            toleranceProfile: {
+                toleranceScore: number;
+                behaviorPattern: 'AGGRESSIVE_HUNTER' | 'SELECTIVE_HUNTER' | 'PASSIVE' | 'UNPREDICTABLE';
+                description: string;
+            };
+            mtfLiquidity: {
+                alignment: 'ALIGNED_BUYSIDE' | 'ALIGNED_SELLSIDE' | 'CONFLICTING' | 'NEUTRAL';
+                strongestTimeframe: string;
+            };
+        };
     }[]>([]);
 
     const microSetupBySymbol = useMemo(() => {
@@ -2424,7 +2440,7 @@ const executeSignal = useCallback((asset: ScoredAsset) => {
                     }));
                     setMicroSetups(setups);
                     
-                    // Store full analyses for expanded view (including scenarioAnalysis)
+                    // Store full analyses for expanded view (including scenarioAnalysis + liquidityAnalysis)
                     // eslint-disable-next-line @typescript-eslint/no-explicit-any
                     const analyses = microDataRes.analyses.map((a: any) => ({
                         symbol: a.symbol,
@@ -2432,6 +2448,7 @@ const executeSignal = useCallback((asset: ScoredAsset) => {
                         price: a.price,
                         technical: a.technical,
                         scenarioAnalysis: a.scenarioAnalysis,
+                        liquidityAnalysis: a.liquidityAnalysis,
                     }));
                     setMicroAnalyses(analyses);
                 }
@@ -2520,6 +2537,11 @@ const executeSignal = useCallback((asset: ScoredAsset) => {
             const mesoReason = typeof mesoAllowed?.reason === 'string' ? mesoAllowed.reason : undefined;
             const mesoBlocked = Boolean(mesoProhibited);
 
+            // Extract liquidity data from MICRO analysis
+            const liquidityScore = analysis?.liquidityAnalysis?.liquidityScore;
+            const liquidityBehavior = analysis?.liquidityAnalysis?.toleranceProfile?.behaviorPattern as ScoredAsset['liquidityBehavior'];
+            const liquidityAlignment = analysis?.liquidityAnalysis?.mtfLiquidity?.alignment;
+
             const baseRow = !ms ? {
                     ...row,
                     levelSource: 'SCAN' as const,
@@ -2529,6 +2551,9 @@ const executeSignal = useCallback((asset: ScoredAsset) => {
                     mesoClass,
                     mesoReason,
                     mesoBlocked,
+                    liquidityScore,
+                    liquidityBehavior,
+                    liquidityAlignment,
                 }
                 : {
                 ...row,
@@ -2546,6 +2571,9 @@ const executeSignal = useCallback((asset: ScoredAsset) => {
                 mesoClass,
                 mesoReason,
                 mesoBlocked,
+                liquidityScore,
+                liquidityBehavior,
+                liquidityAlignment,
             };
 
             const rrNum = Number.parseFloat(baseRow.rr);
@@ -2627,11 +2655,20 @@ const executeSignal = useCallback((asset: ScoredAsset) => {
                             ? 15
                             : 0;
 
+            // Liquidity bonus based on advanced liquidity analysis
+            let liquidityBonus = 0;
+            if (baseRow.liquidityScore && baseRow.liquidityScore >= 80) liquidityBonus += 5;
+            if (baseRow.liquidityBehavior === 'AGGRESSIVE_HUNTER') liquidityBonus += 3;
+            else if (baseRow.liquidityBehavior === 'PASSIVE') liquidityBonus -= 2;
+            if (baseRow.liquidityAlignment === 'ALIGNED_BUYSIDE' || baseRow.liquidityAlignment === 'ALIGNED_SELLSIDE') liquidityBonus += 2;
+
             const finalScore = Math.round(
-                scanScore * 0.35 +
+                scanScore * 0.30 +
                 microScore * 0.35 +
-                mesoScore * 0.2 +
-                macroScore * 0.1 -
+                mesoScore * 0.15 +
+                macroScore * 0.10 +
+                (baseRow.liquidityScore ?? 50) * 0.10 + // 10% weight for liquidity
+                liquidityBonus -
                 riskPenalty -
                 qualityPenalty
             );
@@ -2644,6 +2681,7 @@ const executeSignal = useCallback((asset: ScoredAsset) => {
                     micro: Math.round(microScore),
                     meso: Math.round(mesoScore),
                     macro: Math.round(macroScore),
+                    liquidity: Math.round((baseRow.liquidityScore ?? 50) * 0.10 + liquidityBonus),
                     riskPenalty: -riskPenalty,
                     qualityPenalty: -qualityPenalty,
                 },
@@ -2652,6 +2690,7 @@ const executeSignal = useCallback((asset: ScoredAsset) => {
                     micro: 'Execution readiness: setup technicalScore + action/scenario + EV/RR adjustments',
                     meso: 'Universe gate: allowed vs blocked + alignment with MESO direction',
                     macro: 'Regime gate: liquidity/credit stress and regime confidence',
+                    liquidity: `Advanced liquidity: score=${baseRow.liquidityScore ?? 'N/A'}, behavior=${baseRow.liquidityBehavior ?? 'N/A'}, MTF=${baseRow.liquidityAlignment ?? 'N/A'}`,
                     riskPenalty: `Penalty from riskLabel=${riskLabel} + volatility/liquidity/EV/RR window`,
                     qualityPenalty: `Penalty from quote quality status=${baseRow.quality?.status ?? 'N/A'}`,
                 },

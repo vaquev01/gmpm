@@ -170,6 +170,14 @@ interface MicroAnalysis {
     };
     levelSources?: string[];
     adaptiveContext?: AdaptiveContext;
+    // Liquidity integration
+    liquidityAnalysis?: LiquidityAnalysis;
+    liquidityTargets?: {
+        primary: number;
+        secondary: number;
+        probability: number;
+        alignment: string;
+    };
 }
 
 // Adaptive Target Context from MACRO/MESO
@@ -179,6 +187,61 @@ interface AdaptiveContext {
     classExpectation: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
     classConfidence: 'HIGH' | 'MEDIUM' | 'LOW';
     liquidityScore: number;
+}
+
+// Liquidity Analysis from /api/liquidity-map
+interface LiquidityAnalysis {
+    liquidityScore: number;
+    toleranceProfile: {
+        toleranceScore: number;
+        behaviorPattern: 'AGGRESSIVE_HUNTER' | 'SELECTIVE_HUNTER' | 'PASSIVE' | 'UNPREDICTABLE';
+        description: string;
+    };
+    priceTargets: {
+        direction: 'LONG' | 'SHORT';
+        primaryTarget: number;
+        primaryProbability: number;
+        secondaryTarget: number;
+        invalidationLevel: number;
+        timeHorizon: string;
+        rationale: string[];
+    };
+    captureAnalysis: {
+        targetZone: { price: number; type: 'BUYSIDE' | 'SELLSIDE'; strength: number };
+        captureProbability: number;
+        expectedTimeframe: string;
+    }[];
+    mtfLiquidity: {
+        alignment: 'ALIGNED_BUYSIDE' | 'ALIGNED_SELLSIDE' | 'CONFLICTING' | 'NEUTRAL';
+        strongestTimeframe: 'M15' | 'H1' | 'H4' | 'D1';
+    };
+    historicalBehavior: {
+        sweepFrequency: number;
+        fakeoutRate: number;
+    };
+}
+
+// Fetch liquidity analysis for a symbol
+async function fetchLiquidityAnalysis(symbol: string): Promise<LiquidityAnalysis | null> {
+    try {
+        const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000';
+        const res = await fetch(`${baseUrl}/api/liquidity-map?symbol=${encodeURIComponent(symbol)}`, { cache: 'no-store' });
+        if (!res.ok) return null;
+        const json = await res.json();
+        if (!json?.success || !json?.data) return null;
+        
+        const d = json.data;
+        return {
+            liquidityScore: d.liquidityScore || 50,
+            toleranceProfile: d.toleranceProfile || { toleranceScore: 50, behaviorPattern: 'UNPREDICTABLE', description: '' },
+            priceTargets: d.priceTargets || { direction: 'LONG', primaryTarget: 0, primaryProbability: 50, secondaryTarget: 0, invalidationLevel: 0, timeHorizon: '', rationale: [] },
+            captureAnalysis: d.captureAnalysis || [],
+            mtfLiquidity: d.mtfLiquidity || { alignment: 'NEUTRAL', strongestTimeframe: 'H1' },
+            historicalBehavior: d.historicalBehavior || { sweepFrequency: 0, fakeoutRate: 50 }
+        };
+    } catch {
+        return null;
+    }
 }
 
 // Calculate adaptive multipliers based on MACRO/MESO context
@@ -1268,6 +1331,56 @@ export async function GET(request: Request) {
                 };
             }
 
+            // Fetch liquidity analysis for enhanced insights
+            const liquidityAnalysis = await fetchLiquidityAnalysis(input.symbol);
+            
+            // Enhance setup with liquidity-based targets if available
+            if (setup && liquidityAnalysis && liquidityAnalysis.priceTargets.primaryTarget > 0) {
+                const liqDir = liquidityAnalysis.priceTargets.direction;
+                const mesoDir = input.direction;
+                
+                // If liquidity direction aligns with MESO, use liquidity targets
+                if (liqDir === mesoDir) {
+                    const liqTP = liquidityAnalysis.priceTargets.primaryTarget;
+                    const currentTP1 = setup.takeProfit1;
+                    
+                    // Use liquidity target if it's closer and has good probability
+                    if (liquidityAnalysis.priceTargets.primaryProbability >= 60) {
+                        const isTPBetter = mesoDir === 'LONG' 
+                            ? (liqTP > data.price && liqTP < currentTP1 * 1.5)
+                            : (liqTP < data.price && liqTP > currentTP1 * 0.67);
+                        
+                        if (isTPBetter) {
+                            setup.takeProfit1 = liqTP;
+                            setup.confluences.push(`TP1 ajustado por liquidez (${liquidityAnalysis.priceTargets.primaryProbability}% prob)`);
+                        }
+                    }
+                    
+                    // Add liquidity invalidation if better than current
+                    const liqInv = liquidityAnalysis.priceTargets.invalidationLevel;
+                    if (liqInv > 0) {
+                        const isSLBetter = mesoDir === 'LONG'
+                            ? (liqInv < data.price && liqInv > setup.stopLoss)
+                            : (liqInv > data.price && liqInv < setup.stopLoss);
+                        
+                        if (isSLBetter) {
+                            setup.stopLoss = liqInv;
+                            setup.confluences.push('SL ajustado por nível de liquidez');
+                        }
+                    }
+                }
+                
+                // Adjust stop based on tolerance profile
+                const behavior = liquidityAnalysis.toleranceProfile.behaviorPattern;
+                if (behavior === 'PASSIVE') {
+                    // Passive assets need wider stops
+                    setup.stopLoss = mesoDir === 'LONG' 
+                        ? setup.stopLoss * 0.995 
+                        : setup.stopLoss * 1.005;
+                    setup.confluences.push('SL ampliado (ativo passivo em liquidez)');
+                }
+            }
+            
             const analysis: MicroAnalysis = {
                 symbol: input.symbol,
                 displaySymbol: input.symbol.replace('=X', '').replace('-USD', '').replace('=F', ''),
@@ -1280,6 +1393,13 @@ export async function GET(request: Request) {
                 scenarioAnalysis,
                 levelSources: levelSources || [],
                 adaptiveContext,
+                liquidityAnalysis: liquidityAnalysis || undefined,
+                liquidityTargets: liquidityAnalysis ? {
+                    primary: liquidityAnalysis.priceTargets.primaryTarget,
+                    secondary: liquidityAnalysis.priceTargets.secondaryTarget,
+                    probability: liquidityAnalysis.priceTargets.primaryProbability,
+                    alignment: liquidityAnalysis.mtfLiquidity.alignment
+                } : undefined,
             };
             analyses.push(analysis);
         }
@@ -1309,6 +1429,21 @@ export async function GET(request: Request) {
             // 5. Entry quality (5 pts max)
             if (a.scenarioAnalysis?.entryQuality === 'OTIMO') rankScore += 5;
             else if (a.scenarioAnalysis?.entryQuality === 'BOM') rankScore += 3;
+            
+            // 6. Liquidity Score (10 pts max) - NEW
+            const liqScore = a.liquidityAnalysis?.liquidityScore || 50;
+            rankScore += Math.min(10, liqScore / 10); // 100 liq score = 10 pts
+            
+            // 7. Liquidity MTF Alignment (5 pts max) - NEW
+            const liqAlign = a.liquidityAnalysis?.mtfLiquidity?.alignment;
+            if (liqAlign === 'ALIGNED_BUYSIDE' || liqAlign === 'ALIGNED_SELLSIDE') rankScore += 5;
+            else if (liqAlign === 'CONFLICTING') rankScore -= 3;
+            
+            // 8. Liquidity Behavior Pattern (5 pts max) - NEW
+            const behavior = a.liquidityAnalysis?.toleranceProfile?.behaviorPattern;
+            if (behavior === 'AGGRESSIVE_HUNTER') rankScore += 5;
+            else if (behavior === 'SELECTIVE_HUNTER') rankScore += 3;
+            else if (behavior === 'PASSIVE') rankScore -= 2;
             
             return { ...a, rankScore: Math.round(rankScore) };
         });
