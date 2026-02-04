@@ -1,6 +1,15 @@
 import { NextResponse } from 'next/server';
 import { serverLog } from '@/lib/serverLogs';
 
+// ============================================================================
+// LIQUIDITY MAP - Extended for All MESO Assets
+// ============================================================================
+// This endpoint provides liquidity analysis for all monitored assets
+// Key distinction:
+// - ETFs: Real exchange volume (reliable, centralized)
+// - CFDs/Forex: Synthetic volume (tick-based proxy, decentralized OTC)
+// ============================================================================
+
 // Liquidity Map Types
 interface LiquidityZone {
     priceLevel: number;
@@ -24,10 +33,27 @@ interface VolumeProfileBar {
     isBuyDominant: boolean;
 }
 
+// Liquidity Timing Analysis
+interface LiquidityTiming {
+    bestSession: 'LONDON' | 'NEW_YORK' | 'ASIA' | 'OVERLAP_LON_NY';
+    avgTimeToLiquidityGrab: string; // e.g., "2-4 hours"
+    historicalPattern: 'DAILY_SWEEP' | 'WEEKLY_SWEEP' | 'MONTHLY_SWEEP' | 'IRREGULAR';
+    probabilityOfSweep: number; // 0-100
+    nextLikelyWindow: string; // e.g., "London Open"
+}
+
+// Liquidity Source Info
+interface LiquiditySource {
+    type: 'EXCHANGE' | 'OTC_CFD' | 'FUTURES_PROXY';
+    reliability: 'HIGH' | 'MEDIUM' | 'LOW';
+    description: string;
+    caveat?: string;
+}
+
 interface LiquidityMapData {
     symbol: string;
     displaySymbol: string;
-    assetClass: 'forex' | 'etf';
+    assetClass: 'forex' | 'etf' | 'crypto' | 'commodity' | 'index';
     currentPrice: number;
     atr: number;
     volumeProfile: VolumeProfileBar[];
@@ -38,20 +64,30 @@ interface LiquidityMapData {
     buySideLiquidity: { level: number; strength: number }[];
     sellSideLiquidity: { level: number; strength: number }[];
     marketDirection: 'SEEKING_BUYSIDE' | 'SEEKING_SELLSIDE' | 'BALANCED';
+    timing: LiquidityTiming;
+    source: LiquiditySource;
+    cotData?: { // COT data for Forex
+        commercialNet: number;
+        nonCommercialNet: number;
+        sentiment: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+    };
     timestamp: string;
 }
 
-// Forex pairs to analyze
-const FOREX_SYMBOLS = [
+// Default symbols (fallback if MESO not available)
+const DEFAULT_FOREX = [
     'EURUSD=X', 'GBPUSD=X', 'USDJPY=X', 'USDCHF=X', 'AUDUSD=X', 'USDCAD=X', 'NZDUSD=X',
     'EURGBP=X', 'EURJPY=X', 'GBPJPY=X'
 ];
 
-// ETFs to analyze
-const ETF_SYMBOLS = [
+const DEFAULT_ETF = [
     'SPY', 'QQQ', 'IWM', 'DIA', 'GLD', 'SLV', 'TLT', 'XLF', 'XLE', 'XLK',
     'EEM', 'VXX', 'HYG', 'LQD', 'USO'
 ];
+
+const DEFAULT_CRYPTO = ['BTC-USD', 'ETH-USD'];
+const DEFAULT_COMMODITY = ['GC=F', 'CL=F', 'SI=F'];
+const DEFAULT_INDEX = ['^GSPC', '^DJI', '^IXIC'];
 
 interface YahooCandle {
     open: number;
@@ -373,13 +409,200 @@ function determineMarketDirection(
     return 'BALANCED';
 }
 
-async function analyzeLiquidity(symbol: string, assetClass: 'forex' | 'etf'): Promise<LiquidityMapData | null> {
+// Determine liquidity source type and reliability
+function getLiquiditySource(assetClass: string, symbol: string): LiquiditySource {
+    if (assetClass === 'etf') {
+        return {
+            type: 'EXCHANGE',
+            reliability: 'HIGH',
+            description: 'Volume real de bolsa (NYSE/NASDAQ). Dados centralizados e auditados.'
+        };
+    }
+    
+    if (assetClass === 'forex') {
+        return {
+            type: 'OTC_CFD',
+            reliability: 'MEDIUM',
+            description: 'Volume sintético baseado em tick count. Mercado OTC descentralizado.',
+            caveat: 'Forex não tem volume centralizado. Use Equal Highs/Lows como proxy de liquidez.'
+        };
+    }
+    
+    if (assetClass === 'crypto') {
+        return {
+            type: 'EXCHANGE',
+            reliability: 'MEDIUM',
+            description: 'Volume agregado de exchanges. Pode incluir wash trading.',
+            caveat: 'Volume pode ser inflado em algumas exchanges.'
+        };
+    }
+    
+    if (symbol.includes('=F')) {
+        return {
+            type: 'FUTURES_PROXY',
+            reliability: 'HIGH',
+            description: 'Volume de futuros (CME/COMEX). Dados centralizados e confiáveis.'
+        };
+    }
+    
+    return {
+        type: 'EXCHANGE',
+        reliability: 'MEDIUM',
+        description: 'Volume de mercado'
+    };
+}
+
+// Calculate liquidity timing analysis
+function calculateLiquidityTiming(
+    candles: YahooCandle[],
+    equalLevels: EqualLevel[],
+    assetClass: string
+): LiquidityTiming {
+    // Analyze when liquidity grabs typically occur
+    const now = new Date();
+    const hour = now.getUTCHours();
+    
+    // Session determination
+    let bestSession: LiquidityTiming['bestSession'] = 'LONDON';
+    if (assetClass === 'forex') {
+        // Forex: London-NY overlap is most active
+        bestSession = 'OVERLAP_LON_NY';
+    } else if (assetClass === 'etf' || assetClass === 'index') {
+        // US markets: NY session
+        bestSession = 'NEW_YORK';
+    } else if (assetClass === 'crypto') {
+        // Crypto: Often during Asia or low-liquidity periods
+        bestSession = 'ASIA';
+    }
+    
+    // Determine next likely window based on current time
+    let nextLikelyWindow = 'London Open (08:00 UTC)';
+    if (hour >= 8 && hour < 13) {
+        nextLikelyWindow = 'NY Open (13:00 UTC)';
+    } else if (hour >= 13 && hour < 17) {
+        nextLikelyWindow = 'NY Afternoon (15:00-17:00 UTC)';
+    } else if (hour >= 17 && hour < 22) {
+        nextLikelyWindow = 'Asia Open (00:00 UTC)';
+    } else {
+        nextLikelyWindow = 'London Open (08:00 UTC)';
+    }
+    
+    // Historical pattern analysis (simplified)
+    const strongLevels = equalLevels.filter(e => e.strength === 'STRONG').length;
+    const totalLevels = equalLevels.length;
+    
+    let historicalPattern: LiquidityTiming['historicalPattern'] = 'IRREGULAR';
+    let avgTime = '4-8 hours';
+    let probability = 40;
+    
+    if (strongLevels >= 3) {
+        historicalPattern = 'DAILY_SWEEP';
+        avgTime = '2-4 hours';
+        probability = 70;
+    } else if (strongLevels >= 1) {
+        historicalPattern = 'WEEKLY_SWEEP';
+        avgTime = '1-2 days';
+        probability = 55;
+    } else if (totalLevels > 0) {
+        historicalPattern = 'MONTHLY_SWEEP';
+        avgTime = '1-2 weeks';
+        probability = 35;
+    }
+    
+    return {
+        bestSession,
+        avgTimeToLiquidityGrab: avgTime,
+        historicalPattern,
+        probabilityOfSweep: probability,
+        nextLikelyWindow
+    };
+}
+
+// Fetch COT data for Forex pairs
+async function fetchCOTData(symbol: string): Promise<LiquidityMapData['cotData'] | undefined> {
+    // Map forex symbols to COT currency codes
+    const cotMap: Record<string, string> = {
+        'EURUSD=X': 'EUR',
+        'GBPUSD=X': 'GBP',
+        'USDJPY=X': 'JPY',
+        'AUDUSD=X': 'AUD',
+        'USDCAD=X': 'CAD',
+        'NZDUSD=X': 'NZD',
+        'USDCHF=X': 'CHF'
+    };
+    
+    const currency = cotMap[symbol];
+    if (!currency) return undefined;
+    
+    try {
+        const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000';
+        const res = await fetch(`${baseUrl}/api/cot?currency=${currency}`, { cache: 'no-store' });
+        if (!res.ok) return undefined;
+        
+        const data = await res.json();
+        if (!data.success || !data.data) return undefined;
+        
+        const cot = data.data;
+        const commercialNet = (cot.commercialLong || 0) - (cot.commercialShort || 0);
+        const nonCommercialNet = (cot.nonCommercialLong || 0) - (cot.nonCommercialShort || 0);
+        
+        let sentiment: 'BULLISH' | 'BEARISH' | 'NEUTRAL' = 'NEUTRAL';
+        if (nonCommercialNet > 10000) sentiment = 'BULLISH';
+        else if (nonCommercialNet < -10000) sentiment = 'BEARISH';
+        
+        return { commercialNet, nonCommercialNet, sentiment };
+    } catch {
+        return undefined;
+    }
+}
+
+// Fetch MESO allowed instruments
+async function fetchMesoInstruments(): Promise<{ symbol: string; class: string }[]> {
+    try {
+        const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000';
+        const res = await fetch(`${baseUrl}/api/meso`, { cache: 'no-store' });
+        if (!res.ok) return [];
+        
+        const data = await res.json();
+        if (!data.success || !data.microInputs?.allowedInstruments) return [];
+        
+        return data.microInputs.allowedInstruments.map((i: { symbol: string; class: string }) => ({
+            symbol: i.symbol,
+            class: i.class.toLowerCase()
+        }));
+    } catch {
+        return [];
+    }
+}
+
+// Determine asset class from symbol
+function getAssetClass(symbol: string): 'forex' | 'etf' | 'crypto' | 'commodity' | 'index' {
+    if (symbol.includes('=X')) return 'forex';
+    if (symbol.includes('-USD') && (symbol.startsWith('BTC') || symbol.startsWith('ETH'))) return 'crypto';
+    if (symbol.includes('=F')) return 'commodity';
+    if (symbol.startsWith('^')) return 'index';
+    return 'etf';
+}
+
+async function analyzeLiquidity(
+    symbol: string, 
+    assetClass: 'forex' | 'etf' | 'crypto' | 'commodity' | 'index'
+): Promise<LiquidityMapData | null> {
     const candles = await fetchCandles(symbol, '1mo', '1h');
     if (candles.length < 20) return null;
     
     const currentPrice = candles[candles.length - 1].close;
     const atr = calculateATR(candles);
-    const tolerance = assetClass === 'forex' ? 0.0005 : 0.005; // Tighter for forex
+    
+    // Tolerance varies by asset class
+    const toleranceMap: Record<string, number> = {
+        forex: 0.0005,
+        crypto: 0.01,
+        etf: 0.005,
+        commodity: 0.01,
+        index: 0.005
+    };
+    const tolerance = toleranceMap[assetClass] || 0.005;
     
     const { profile, poc, valueArea } = calculateVolumeProfile(candles);
     const equalLevels = findEqualLevels(candles, tolerance);
@@ -397,9 +620,18 @@ async function analyzeLiquidity(symbol: string, assetClass: 'forex' | 'etf'): Pr
         .map(e => ({ level: e.price, strength: e.touches * 20 }))
         .slice(0, 5);
     
+    // Get timing analysis
+    const timing = calculateLiquidityTiming(candles, equalLevels, assetClass);
+    
+    // Get source info
+    const source = getLiquiditySource(assetClass, symbol);
+    
+    // Get COT data for forex
+    const cotData = assetClass === 'forex' ? await fetchCOTData(symbol) : undefined;
+    
     return {
         symbol,
-        displaySymbol: symbol.replace('=X', '').replace('-USD', '').replace('=F', ''),
+        displaySymbol: symbol.replace('=X', '').replace('-USD', '').replace('=F', '').replace('^', ''),
         assetClass,
         currentPrice,
         atr,
@@ -411,6 +643,9 @@ async function analyzeLiquidity(symbol: string, assetClass: 'forex' | 'etf'): Pr
         buySideLiquidity,
         sellSideLiquidity,
         marketDirection,
+        timing,
+        source,
+        cotData,
         timestamp: new Date().toISOString()
     };
 }
@@ -419,11 +654,14 @@ export async function GET(request: Request) {
     try {
         const { searchParams } = new URL(request.url);
         const symbolParam = searchParams.get('symbol');
-        const assetClassParam = searchParams.get('class') as 'forex' | 'etf' | null;
+        const assetClassParam = searchParams.get('class') as 'forex' | 'etf' | 'crypto' | 'commodity' | 'index' | 'all' | null;
+        const useMeso = searchParams.get('meso') === 'true';
         
         // Single symbol analysis
         if (symbolParam) {
-            const assetClass = assetClassParam || (symbolParam.includes('=X') ? 'forex' : 'etf');
+            const assetClass = assetClassParam && assetClassParam !== 'all' 
+                ? assetClassParam 
+                : getAssetClass(symbolParam);
             const data = await analyzeLiquidity(symbolParam, assetClass);
             
             if (!data) {
@@ -442,71 +680,103 @@ export async function GET(request: Request) {
             });
         }
         
-        // Full analysis for forex and/or ETFs
-        const includeForex = !assetClassParam || assetClassParam === 'forex';
-        const includeETF = !assetClassParam || assetClassParam === 'etf';
+        // Build symbol list - either from MESO or defaults
+        type AssetClass = 'forex' | 'etf' | 'crypto' | 'commodity' | 'index';
+        let symbols: { symbol: string; class: AssetClass }[] = [];
         
-        const symbols: { symbol: string; class: 'forex' | 'etf' }[] = [];
-        if (includeForex) {
-            symbols.push(...FOREX_SYMBOLS.map(s => ({ symbol: s, class: 'forex' as const })));
+        if (useMeso) {
+            // Fetch from MESO allowed instruments
+            const mesoInstruments = await fetchMesoInstruments();
+            symbols = mesoInstruments.map(i => ({
+                symbol: i.symbol,
+                class: getAssetClass(i.symbol)
+            }));
         }
-        if (includeETF) {
-            symbols.push(...ETF_SYMBOLS.map(s => ({ symbol: s, class: 'etf' as const })));
+        
+        // Add defaults if MESO empty or specific class requested
+        if (symbols.length === 0 || !useMeso) {
+            const includeAll = !assetClassParam || assetClassParam === 'all';
+            
+            if (includeAll || assetClassParam === 'forex') {
+                symbols.push(...DEFAULT_FOREX.map(s => ({ symbol: s, class: 'forex' as const })));
+            }
+            if (includeAll || assetClassParam === 'etf') {
+                symbols.push(...DEFAULT_ETF.map(s => ({ symbol: s, class: 'etf' as const })));
+            }
+            if (includeAll || assetClassParam === 'crypto') {
+                symbols.push(...DEFAULT_CRYPTO.map(s => ({ symbol: s, class: 'crypto' as const })));
+            }
+            if (includeAll || assetClassParam === 'commodity') {
+                symbols.push(...DEFAULT_COMMODITY.map(s => ({ symbol: s, class: 'commodity' as const })));
+            }
+            if (includeAll || assetClassParam === 'index') {
+                symbols.push(...DEFAULT_INDEX.map(s => ({ symbol: s, class: 'index' as const })));
+            }
         }
+        
+        // Remove duplicates
+        const uniqueSymbols = Array.from(new Map(symbols.map(s => [s.symbol, s])).values());
         
         // Analyze in parallel with concurrency limit
         const results: LiquidityMapData[] = [];
         const batchSize = 5;
         
-        for (let i = 0; i < symbols.length; i += batchSize) {
-            const batch = symbols.slice(i, i + batchSize);
+        for (let i = 0; i < uniqueSymbols.length; i += batchSize) {
+            const batch = uniqueSymbols.slice(i, i + batchSize);
             const batchResults = await Promise.all(
                 batch.map(s => analyzeLiquidity(s.symbol, s.class))
             );
             results.push(...batchResults.filter((r): r is LiquidityMapData => r !== null));
         }
         
-        // Sort by market direction relevance
+        // Group by asset class
         const forexResults = results.filter(r => r.assetClass === 'forex');
         const etfResults = results.filter(r => r.assetClass === 'etf');
+        const cryptoResults = results.filter(r => r.assetClass === 'crypto');
+        const commodityResults = results.filter(r => r.assetClass === 'commodity');
+        const indexResults = results.filter(r => r.assetClass === 'index');
         
-        // Calculate summary
+        // Helper for summary calculation
+        const calcSummary = (arr: LiquidityMapData[], decimals: number) => ({
+            total: arr.length,
+            seekingBuyside: arr.filter(r => r.marketDirection === 'SEEKING_BUYSIDE').length,
+            seekingSellside: arr.filter(r => r.marketDirection === 'SEEKING_SELLSIDE').length,
+            balanced: arr.filter(r => r.marketDirection === 'BALANCED').length,
+            topLiquidity: arr
+                .filter(r => r.equalLevels.length > 0)
+                .sort((a, b) => (b.equalLevels[0]?.touches || 0) - (a.equalLevels[0]?.touches || 0))
+                .slice(0, 3)
+                .map(r => ({
+                    symbol: r.displaySymbol,
+                    direction: r.marketDirection,
+                    nearestLiquidity: r.equalLevels[0]?.price.toFixed(decimals),
+                    timing: r.timing.nextLikelyWindow,
+                    probability: r.timing.probabilityOfSweep
+                }))
+        });
+        
         const summary = {
-            forex: {
-                total: forexResults.length,
-                seekingBuyside: forexResults.filter(r => r.marketDirection === 'SEEKING_BUYSIDE').length,
-                seekingSellside: forexResults.filter(r => r.marketDirection === 'SEEKING_SELLSIDE').length,
-                balanced: forexResults.filter(r => r.marketDirection === 'BALANCED').length,
-                topLiquidity: forexResults
-                    .filter(r => r.equalLevels.length > 0)
-                    .sort((a, b) => b.equalLevels[0]?.touches - a.equalLevels[0]?.touches)
-                    .slice(0, 3)
-                    .map(r => ({
-                        symbol: r.displaySymbol,
-                        direction: r.marketDirection,
-                        nearestLiquidity: r.equalLevels[0]?.price.toFixed(5)
-                    }))
-            },
-            etf: {
-                total: etfResults.length,
-                seekingBuyside: etfResults.filter(r => r.marketDirection === 'SEEKING_BUYSIDE').length,
-                seekingSellside: etfResults.filter(r => r.marketDirection === 'SEEKING_SELLSIDE').length,
-                balanced: etfResults.filter(r => r.marketDirection === 'BALANCED').length,
-                topLiquidity: etfResults
-                    .filter(r => r.equalLevels.length > 0)
-                    .sort((a, b) => b.equalLevels[0]?.touches - a.equalLevels[0]?.touches)
-                    .slice(0, 3)
-                    .map(r => ({
-                        symbol: r.displaySymbol,
-                        direction: r.marketDirection,
-                        nearestLiquidity: r.equalLevels[0]?.price.toFixed(2)
-                    }))
+            forex: calcSummary(forexResults, 5),
+            etf: calcSummary(etfResults, 2),
+            crypto: calcSummary(cryptoResults, 2),
+            commodity: calcSummary(commodityResults, 2),
+            index: calcSummary(indexResults, 2),
+            total: {
+                analyzed: results.length,
+                fromMeso: useMeso,
+                seekingBuyside: results.filter(r => r.marketDirection === 'SEEKING_BUYSIDE').length,
+                seekingSellside: results.filter(r => r.marketDirection === 'SEEKING_SELLSIDE').length
             }
         };
         
         serverLog('info', 'liquidity_map_full', { 
-            forexCount: forexResults.length, 
-            etfCount: etfResults.length 
+            total: results.length,
+            forex: forexResults.length, 
+            etf: etfResults.length,
+            crypto: cryptoResults.length,
+            commodity: commodityResults.length,
+            index: indexResults.length,
+            useMeso
         }, 'api/liquidity-map');
         
         return NextResponse.json({
@@ -514,6 +784,10 @@ export async function GET(request: Request) {
             timestamp: new Date().toISOString(),
             forex: forexResults,
             etf: etfResults,
+            crypto: cryptoResults,
+            commodity: commodityResults,
+            index: indexResults,
+            all: results,
             summary
         });
         

@@ -7,7 +7,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Progress } from '@/components/ui/progress';
 import {
     Droplets, TrendingUp, RefreshCw, AlertTriangle,
-    ArrowUp, ArrowDown, Minus, Target, Layers
+    ArrowUp, ArrowDown, Minus, Target, Layers, Clock,
+    AlertCircle, CheckCircle, Bitcoin, BarChart3
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -27,10 +28,25 @@ interface VolumeProfileBar {
     isBuyDominant: boolean;
 }
 
+interface LiquidityTiming {
+    bestSession: 'LONDON' | 'NEW_YORK' | 'ASIA' | 'OVERLAP_LON_NY';
+    avgTimeToLiquidityGrab: string;
+    historicalPattern: 'DAILY_SWEEP' | 'WEEKLY_SWEEP' | 'MONTHLY_SWEEP' | 'IRREGULAR';
+    probabilityOfSweep: number;
+    nextLikelyWindow: string;
+}
+
+interface LiquiditySource {
+    type: 'EXCHANGE' | 'OTC_CFD' | 'FUTURES_PROXY';
+    reliability: 'HIGH' | 'MEDIUM' | 'LOW';
+    description: string;
+    caveat?: string;
+}
+
 interface LiquidityMapData {
     symbol: string;
     displaySymbol: string;
-    assetClass: 'forex' | 'etf';
+    assetClass: 'forex' | 'etf' | 'crypto' | 'commodity' | 'index';
     currentPrice: number;
     atr: number;
     volumeProfile: VolumeProfileBar[];
@@ -46,7 +62,30 @@ interface LiquidityMapData {
     buySideLiquidity: { level: number; strength: number }[];
     sellSideLiquidity: { level: number; strength: number }[];
     marketDirection: 'SEEKING_BUYSIDE' | 'SEEKING_SELLSIDE' | 'BALANCED';
+    timing: LiquidityTiming;
+    source: LiquiditySource;
+    cotData?: {
+        commercialNet: number;
+        nonCommercialNet: number;
+        sentiment: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+    };
     timestamp: string;
+}
+
+type AssetClassKey = 'forex' | 'etf' | 'crypto' | 'commodity' | 'index' | 'all';
+
+interface ClassSummary {
+    total: number;
+    seekingBuyside: number;
+    seekingSellside: number;
+    balanced: number;
+    topLiquidity: { 
+        symbol: string; 
+        direction: string; 
+        nearestLiquidity: string;
+        timing?: string;
+        probability?: number;
+    }[];
 }
 
 interface LiquidityMapResponse {
@@ -54,20 +93,21 @@ interface LiquidityMapResponse {
     timestamp: string;
     forex: LiquidityMapData[];
     etf: LiquidityMapData[];
+    crypto: LiquidityMapData[];
+    commodity: LiquidityMapData[];
+    index: LiquidityMapData[];
+    all: LiquidityMapData[];
     summary: {
-        forex: {
-            total: number;
+        forex: ClassSummary;
+        etf: ClassSummary;
+        crypto: ClassSummary;
+        commodity: ClassSummary;
+        index: ClassSummary;
+        total: {
+            analyzed: number;
+            fromMeso: boolean;
             seekingBuyside: number;
             seekingSellside: number;
-            balanced: number;
-            topLiquidity: { symbol: string; direction: string; nearestLiquidity: string }[];
-        };
-        etf: {
-            total: number;
-            seekingBuyside: number;
-            seekingSellside: number;
-            balanced: number;
-            topLiquidity: { symbol: string; direction: string; nearestLiquidity: string }[];
         };
     };
 }
@@ -222,6 +262,94 @@ const AssetLiquidityCard = ({ data }: { data: LiquidityMapData }) => {
                         </div>
                     </div>
                 )}
+                
+                {/* Timing Analysis */}
+                {data.timing && (
+                    <div className="border-t border-gray-800 pt-2">
+                        <div className="text-[10px] text-gray-500 uppercase mb-1 flex items-center gap-1">
+                            <Clock className="w-3 h-3" /> Timing de Liquidez
+                        </div>
+                        <div className="grid grid-cols-2 gap-2 text-[10px]">
+                            <div>
+                                <span className="text-gray-500">Próx. Janela: </span>
+                                <span className="text-cyan-400">{data.timing.nextLikelyWindow}</span>
+                            </div>
+                            <div>
+                                <span className="text-gray-500">Prob. Sweep: </span>
+                                <span className={cn(
+                                    data.timing.probabilityOfSweep >= 60 ? 'text-green-400' :
+                                    data.timing.probabilityOfSweep >= 40 ? 'text-yellow-400' : 'text-gray-400'
+                                )}>{data.timing.probabilityOfSweep}%</span>
+                            </div>
+                            <div>
+                                <span className="text-gray-500">Padrão: </span>
+                                <span className="text-gray-300">{data.timing.historicalPattern.replace('_', ' ')}</span>
+                            </div>
+                            <div>
+                                <span className="text-gray-500">Tempo Médio: </span>
+                                <span className="text-gray-300">{data.timing.avgTimeToLiquidityGrab}</span>
+                            </div>
+                        </div>
+                    </div>
+                )}
+                
+                {/* Source Info */}
+                {data.source && (
+                    <div className="border-t border-gray-800 pt-2">
+                        <div className="flex items-center gap-2 text-[10px]">
+                            {data.source.reliability === 'HIGH' ? (
+                                <CheckCircle className="w-3 h-3 text-green-400" />
+                            ) : data.source.reliability === 'MEDIUM' ? (
+                                <AlertCircle className="w-3 h-3 text-yellow-400" />
+                            ) : (
+                                <AlertTriangle className="w-3 h-3 text-red-400" />
+                            )}
+                            <span className="text-gray-500">
+                                {data.source.type === 'EXCHANGE' ? 'Volume Real (Bolsa)' :
+                                 data.source.type === 'OTC_CFD' ? 'Volume Sintético (CFD/OTC)' :
+                                 'Volume Futuros (Proxy)'}
+                            </span>
+                            <Badge variant="outline" className={cn(
+                                "text-[8px]",
+                                data.source.reliability === 'HIGH' ? 'border-green-500 text-green-400' :
+                                data.source.reliability === 'MEDIUM' ? 'border-yellow-500 text-yellow-400' :
+                                'border-red-500 text-red-400'
+                            )}>
+                                {data.source.reliability}
+                            </Badge>
+                        </div>
+                        {data.source.caveat && (
+                            <div className="text-[9px] text-yellow-500/70 mt-1 italic">
+                                ⚠️ {data.source.caveat}
+                            </div>
+                        )}
+                    </div>
+                )}
+                
+                {/* COT Data (Forex only) */}
+                {data.cotData && (
+                    <div className="border-t border-gray-800 pt-2">
+                        <div className="text-[10px] text-gray-500 uppercase mb-1">COT (Posicionamento Institucional)</div>
+                        <div className="flex items-center justify-between text-[10px]">
+                            <div>
+                                <span className="text-gray-500">Especuladores: </span>
+                                <span className={cn(
+                                    data.cotData.nonCommercialNet > 0 ? 'text-green-400' : 'text-red-400'
+                                )}>
+                                    {data.cotData.nonCommercialNet > 0 ? '+' : ''}{(data.cotData.nonCommercialNet / 1000).toFixed(1)}K
+                                </span>
+                            </div>
+                            <Badge className={cn(
+                                "text-[9px]",
+                                data.cotData.sentiment === 'BULLISH' ? 'bg-green-500/20 text-green-400' :
+                                data.cotData.sentiment === 'BEARISH' ? 'bg-red-500/20 text-red-400' :
+                                'bg-gray-500/20 text-gray-400'
+                            )}>
+                                {data.cotData.sentiment}
+                            </Badge>
+                        </div>
+                    </div>
+                )}
             </CardContent>
         </Card>
     );
@@ -286,12 +414,22 @@ const SummaryCard = ({
     </Card>
 );
 
+// Asset class config
+const assetClassConfig: Record<AssetClassKey, { label: string; icon: React.ElementType; color: string }> = {
+    forex: { label: 'Forex', icon: TrendingUp, color: 'blue' },
+    etf: { label: 'ETFs', icon: Layers, color: 'purple' },
+    crypto: { label: 'Crypto', icon: Bitcoin, color: 'orange' },
+    commodity: { label: 'Commodities', icon: BarChart3, color: 'yellow' },
+    index: { label: 'Índices', icon: Target, color: 'cyan' },
+    all: { label: 'Todos', icon: Droplets, color: 'gray' }
+};
+
 // Main Component
 export const LiquidityHeatmap = () => {
     const [data, setData] = useState<LiquidityMapResponse | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
-    const [activeTab, setActiveTab] = useState<'forex' | 'etf'>('forex');
+    const [activeTab, setActiveTab] = useState<AssetClassKey>('forex');
 
     const fetchData = useCallback(async () => {
         setLoading(true);
@@ -385,46 +523,76 @@ export const LiquidityHeatmap = () => {
                 </div>
             </div>
 
+            {/* Global Summary */}
+            <Card className="bg-gray-900/80 border-gray-800">
+                <CardContent className="p-4">
+                    <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-6">
+                            <div className="text-center">
+                                <div className="text-2xl font-bold text-gray-100">{data.summary.total.analyzed}</div>
+                                <div className="text-[9px] text-gray-500 uppercase">Ativos Analisados</div>
+                            </div>
+                            <div className="text-center">
+                                <div className="text-2xl font-bold text-green-400">{data.summary.total.seekingBuyside}</div>
+                                <div className="text-[9px] text-gray-500 uppercase">Buscando Buy Side</div>
+                            </div>
+                            <div className="text-center">
+                                <div className="text-2xl font-bold text-red-400">{data.summary.total.seekingSellside}</div>
+                                <div className="text-[9px] text-gray-500 uppercase">Buscando Sell Side</div>
+                            </div>
+                        </div>
+                        <div className="text-right text-[10px] text-gray-500">
+                            <div>Fonte: {data.summary.total.fromMeso ? 'MESO Allowed' : 'Default Universe'}</div>
+                        </div>
+                    </div>
+                </CardContent>
+            </Card>
+
             {/* Tabs */}
-            <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as 'forex' | 'etf')}>
-                <TabsList className="bg-gray-900/80 border border-gray-800">
-                    <TabsTrigger value="forex" className="data-[state=active]:bg-blue-500/20 data-[state=active]:text-blue-400">
-                        <TrendingUp className="w-4 h-4 mr-2" />
-                        Forex ({data.forex.length})
-                    </TabsTrigger>
-                    <TabsTrigger value="etf" className="data-[state=active]:bg-purple-500/20 data-[state=active]:text-purple-400">
-                        <Layers className="w-4 h-4 mr-2" />
-                        ETFs ({data.etf.length})
-                    </TabsTrigger>
+            <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as AssetClassKey)}>
+                <TabsList className="bg-gray-900/80 border border-gray-800 flex-wrap">
+                    {(['forex', 'etf', 'crypto', 'commodity', 'index', 'all'] as AssetClassKey[]).map(cls => {
+                        const config = assetClassConfig[cls];
+                        const Icon = config.icon;
+                        const count = cls === 'all' ? data.all.length : data[cls]?.length || 0;
+                        return (
+                            <TabsTrigger 
+                                key={cls} 
+                                value={cls} 
+                                className={`data-[state=active]:bg-${config.color}-500/20 data-[state=active]:text-${config.color}-400`}
+                            >
+                                <Icon className="w-4 h-4 mr-1" />
+                                {config.label} ({count})
+                            </TabsTrigger>
+                        );
+                    })}
                 </TabsList>
 
-                <TabsContent value="forex" className="space-y-4 mt-4">
-                    {/* Summary */}
-                    <SummaryCard 
-                        title="Resumo Forex" 
-                        data={data.summary.forex}
-                        icon={TrendingUp}
-                    />
-                    
-                    {/* Grid of assets */}
-                    <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4">
-                        {data.forex.map(asset => (
-                            <AssetLiquidityCard key={asset.symbol} data={asset} />
-                        ))}
-                    </div>
-                </TabsContent>
+                {(['forex', 'etf', 'crypto', 'commodity', 'index'] as const).map(cls => (
+                    <TabsContent key={cls} value={cls} className="space-y-4 mt-4">
+                        <SummaryCard 
+                            title={`Resumo ${assetClassConfig[cls].label}`}
+                            data={data.summary[cls]}
+                            icon={assetClassConfig[cls].icon}
+                        />
+                        <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4">
+                            {data[cls].map(asset => (
+                                <AssetLiquidityCard key={asset.symbol} data={asset} />
+                            ))}
+                        </div>
+                        {data[cls].length === 0 && (
+                            <Card className="bg-gray-900/50 border-gray-800">
+                                <CardContent className="p-6 text-center text-gray-500">
+                                    Nenhum ativo {assetClassConfig[cls].label} disponível
+                                </CardContent>
+                            </Card>
+                        )}
+                    </TabsContent>
+                ))}
 
-                <TabsContent value="etf" className="space-y-4 mt-4">
-                    {/* Summary */}
-                    <SummaryCard 
-                        title="Resumo ETFs" 
-                        data={data.summary.etf}
-                        icon={Layers}
-                    />
-                    
-                    {/* Grid of assets */}
+                <TabsContent value="all" className="space-y-4 mt-4">
                     <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4">
-                        {data.etf.map(asset => (
+                        {data.all.map(asset => (
                             <AssetLiquidityCard key={asset.symbol} data={asset} />
                         ))}
                     </div>
