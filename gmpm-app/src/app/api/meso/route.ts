@@ -819,25 +819,42 @@ export async function GET() {
             const classInfo = ASSET_CLASSES[cls.class as keyof typeof ASSET_CLASSES];
             if (!classInfo) continue;
 
-            // Only generate instruments for classes with clear direction (not AVOID or low confidence)
-            if (cls.direction === 'AVOID' || cls.confidence === 'LOW') {
+            // For AVOID classes: add specific avoid items to prohibited but still include some for monitoring
+            if (cls.direction === 'AVOID') {
                 cls.avoidList.forEach(avoid => {
                     prohibitedInstruments.push({
                         symbol: avoid,
                         reason: `${cls.name}: ${cls.drivers[0] || 'Regime prohibition'}`
                     });
                 });
-                // Add all class symbols to prohibited if AVOID
-                if (cls.direction === 'AVOID') {
-                    classInfo.symbols.forEach(sym => {
-                        if (!prohibitedInstruments.find(p => p.symbol === sym)) {
-                            prohibitedInstruments.push({
-                                symbol: sym,
-                                reason: `${cls.name}: Direction is AVOID in current regime`
-                            });
-                        }
+                
+                // Still add top symbols for WATCHLIST (lower score, cautionary)
+                const watchlistScore = 20; // Low conviction for monitoring only
+                classInfo.symbols.slice(0, 5).forEach((sym, idx) => {
+                    if (!cls.avoidList.includes(sym)) {
+                        allowedInstruments.push({
+                            symbol: sym,
+                            direction: cls.expectation === 'BEARISH' ? 'SHORT' : 'LONG',
+                            class: cls.name,
+                            reason: `[WATCHLIST] ${cls.name} - regime suggests caution`,
+                            score: watchlistScore - idx
+                        });
+                    }
+                });
+                continue;
+            }
+            
+            // For LOW confidence: still include but with lower priority
+            if (cls.confidence === 'LOW') {
+                classInfo.symbols.slice(0, 3).forEach((sym, idx) => {
+                    allowedInstruments.push({
+                        symbol: sym,
+                        direction: cls.direction === 'LONG' ? 'LONG' : 'SHORT',
+                        class: cls.name,
+                        reason: `[LOW CONF] ${cls.name} - ${cls.drivers[0] || 'Low conviction'}`,
+                        score: 15 - idx
                     });
-                }
+                });
                 continue;
             }
 
@@ -916,8 +933,8 @@ export async function GET() {
                 }
             }
 
-            // Add top 2 instruments per class (quality over quantity)
-            instrumentsToAdd.slice(0, 2).forEach(inst => {
+            // Add top 5 instruments per class (expanded universe)
+            instrumentsToAdd.slice(0, 5).forEach(inst => {
                 allowedInstruments.push({
                     symbol: inst.symbol,
                     direction: cls.direction === 'LONG' ? 'LONG' : 'SHORT',
@@ -926,9 +943,26 @@ export async function GET() {
                     score: inst.score
                 });
             });
+            
+            // Also add more class symbols for broader coverage (up to 8 total per class)
+            if (instrumentsToAdd.length < 8) {
+                const existingSymbols = new Set(instrumentsToAdd.map(i => i.symbol));
+                classInfo.symbols.slice(0, 10).forEach(sym => {
+                    if (!existingSymbols.has(sym) && instrumentsToAdd.length < 8) {
+                        allowedInstruments.push({
+                            symbol: sym,
+                            direction: cls.direction === 'LONG' ? 'LONG' : 'SHORT',
+                            class: cls.name,
+                            reason: `${cls.name} regime-aligned opportunity`,
+                            score: convictionScore - 15
+                        });
+                        existingSymbols.add(sym);
+                    }
+                });
+            }
         }
 
-        // Sort by conviction score and limit to top 10
+        // Sort by conviction score (no limit - include all allowed)
         allowedInstruments.sort((a, b) => b.score - a.score);
 
         return NextResponse.json({
