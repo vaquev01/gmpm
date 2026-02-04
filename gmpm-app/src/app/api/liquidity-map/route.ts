@@ -50,6 +50,87 @@ interface LiquiditySource {
     caveat?: string;
 }
 
+// ============================================================================
+// LIQUIDITY TOLERANCE & BEHAVIOR ANALYSIS
+// ============================================================================
+
+// How much an asset tolerates leaving liquidity behind before reversing
+interface LiquidityToleranceProfile {
+    toleranceScore: number; // 0-100: 0=always captures, 100=often ignores
+    avgSkippedLiquidity: number; // Average % of liquidity left behind
+    maxSkippedLiquidity: number; // Maximum observed skip
+    behaviorPattern: 'AGGRESSIVE_HUNTER' | 'SELECTIVE_HUNTER' | 'PASSIVE' | 'UNPREDICTABLE';
+    confidenceLevel: 'HIGH' | 'MEDIUM' | 'LOW';
+    description: string;
+}
+
+// Probability of reaching specific liquidity zones
+interface LiquidityCaptureAnalysis {
+    targetZone: { price: number; type: 'BUYSIDE' | 'SELLSIDE'; strength: number };
+    distancePercent: number;
+    captureProbability: number; // 0-100%
+    expectedTimeframe: string; // e.g., "4-8 hours", "1-2 days"
+    riskToReward: number;
+    confidenceFactors: string[];
+    warningFactors: string[];
+}
+
+// Investment size impact on liquidity
+interface InvestmentSizeAnalysis {
+    tier: 'RETAIL' | 'SMALL_INST' | 'MEDIUM_INST' | 'LARGE_INST';
+    investmentRange: string; // e.g., "$1K-$10K"
+    slippageEstimate: number; // Expected slippage %
+    liquidityAdequacy: 'EXCELLENT' | 'GOOD' | 'ADEQUATE' | 'POOR' | 'INSUFFICIENT';
+    maxPositionSize: number; // Max recommended position
+    avgDailyVolume: number;
+    volumeParticipation: number; // % of daily volume your trade represents
+    recommendation: string;
+}
+
+// Historical liquidity behavior patterns
+interface HistoricalLiquidityBehavior {
+    sweepFrequency: number; // Sweeps per week
+    avgSweepMagnitude: number; // Average % move after sweep
+    avgRetracementAfterSweep: number; // How much it retraces after capturing
+    preferredSweepSession: 'ASIA' | 'LONDON' | 'NEW_YORK' | 'OVERLAP';
+    typicalSweepDuration: string; // How long sweeps take
+    fakeoutRate: number; // % of sweeps that are fakeouts
+    patterns: {
+        mondayBias: 'BUYSIDE' | 'SELLSIDE' | 'NEUTRAL';
+        fridayBias: 'BUYSIDE' | 'SELLSIDE' | 'NEUTRAL';
+        monthEndBias: 'BUYSIDE' | 'SELLSIDE' | 'NEUTRAL';
+    };
+    recentSweeps: {
+        timestamp: string;
+        type: 'BUYSIDE' | 'SELLSIDE';
+        magnitude: number;
+        wasSuccessful: boolean;
+    }[];
+}
+
+// Expected price targets based on liquidity
+interface LiquidityPriceTarget {
+    direction: 'LONG' | 'SHORT';
+    primaryTarget: number;
+    primaryProbability: number;
+    secondaryTarget: number;
+    secondaryProbability: number;
+    invalidationLevel: number;
+    timeHorizon: string;
+    rationale: string[];
+    riskFactors: string[];
+}
+
+// Multi-timeframe liquidity analysis
+interface MultiTimeframeLiquidity {
+    m15: { bias: 'BUYSIDE' | 'SELLSIDE' | 'NEUTRAL'; nearestLiquidity: number; distance: number };
+    h1: { bias: 'BUYSIDE' | 'SELLSIDE' | 'NEUTRAL'; nearestLiquidity: number; distance: number };
+    h4: { bias: 'BUYSIDE' | 'SELLSIDE' | 'NEUTRAL'; nearestLiquidity: number; distance: number };
+    d1: { bias: 'BUYSIDE' | 'SELLSIDE' | 'NEUTRAL'; nearestLiquidity: number; distance: number };
+    alignment: 'ALIGNED_BUYSIDE' | 'ALIGNED_SELLSIDE' | 'CONFLICTING' | 'NEUTRAL';
+    strongestTimeframe: 'M15' | 'H1' | 'H4' | 'D1';
+}
+
 interface LiquidityMapData {
     symbol: string;
     displaySymbol: string;
@@ -71,6 +152,14 @@ interface LiquidityMapData {
         nonCommercialNet: number;
         sentiment: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
     };
+    // NEW: Enhanced liquidity analysis
+    toleranceProfile: LiquidityToleranceProfile;
+    captureAnalysis: LiquidityCaptureAnalysis[];
+    investmentAnalysis: InvestmentSizeAnalysis[];
+    historicalBehavior: HistoricalLiquidityBehavior;
+    priceTargets: LiquidityPriceTarget;
+    mtfLiquidity: MultiTimeframeLiquidity;
+    liquidityScore: number; // Overall 0-100 score for trade quality based on liquidity
     timestamp: string;
 }
 
@@ -584,6 +673,587 @@ function getAssetClass(symbol: string): 'forex' | 'etf' | 'crypto' | 'commodity'
     return 'etf';
 }
 
+// ============================================================================
+// ADVANCED LIQUIDITY ANALYSIS FUNCTIONS
+// ============================================================================
+
+// Calculate Liquidity Tolerance Profile - how much the asset tolerates leaving liquidity
+function calculateLiquidityTolerance(
+    candles: YahooCandle[],
+    equalLevels: EqualLevel[],
+    _atr: number // Prefixed with _ to indicate intentionally unused but kept for future use
+): LiquidityToleranceProfile {
+    if (candles.length < 50 || equalLevels.length === 0) {
+        return {
+            toleranceScore: 50,
+            avgSkippedLiquidity: 0,
+            maxSkippedLiquidity: 0,
+            behaviorPattern: 'UNPREDICTABLE',
+            confidenceLevel: 'LOW',
+            description: 'Dados insuficientes para análise de tolerância'
+        };
+    }
+
+    // Analyze how often price reaches liquidity zones vs passes them
+    let sweepCount = 0;
+    let skipCount = 0;
+    let totalSkipDistance = 0;
+    let maxSkip = 0;
+
+    for (const level of equalLevels) {
+        const isHigh = level.type === 'EQUAL_HIGHS';
+        let swept = false;
+        let minDistanceToLevel = Infinity;
+
+        for (let i = Math.max(0, candles.length - 100); i < candles.length; i++) {
+            const c = candles[i];
+            if (isHigh && c.high >= level.price) {
+                swept = true;
+                sweepCount++;
+                break;
+            }
+            if (!isHigh && c.low <= level.price) {
+                swept = true;
+                sweepCount++;
+                break;
+            }
+            // Track how close it got
+            const dist = isHigh 
+                ? Math.abs(c.high - level.price) / level.price * 100
+                : Math.abs(c.low - level.price) / level.price * 100;
+            minDistanceToLevel = Math.min(minDistanceToLevel, dist);
+        }
+
+        if (!swept && minDistanceToLevel < 2) { // Got within 2% but didn't sweep
+            skipCount++;
+            totalSkipDistance += minDistanceToLevel;
+            maxSkip = Math.max(maxSkip, minDistanceToLevel);
+        }
+    }
+
+    const totalLevels = equalLevels.length;
+    const sweepRate = totalLevels > 0 ? (sweepCount / totalLevels) * 100 : 50;
+    const avgSkip = skipCount > 0 ? totalSkipDistance / skipCount : 0;
+
+    // Calculate tolerance score (0 = aggressive hunter, 100 = passive)
+    const toleranceScore = Math.min(100, Math.max(0, 100 - sweepRate + (skipCount * 5)));
+
+    let behaviorPattern: LiquidityToleranceProfile['behaviorPattern'] = 'UNPREDICTABLE';
+    if (sweepRate >= 70) behaviorPattern = 'AGGRESSIVE_HUNTER';
+    else if (sweepRate >= 50) behaviorPattern = 'SELECTIVE_HUNTER';
+    else if (sweepRate >= 30) behaviorPattern = 'PASSIVE';
+
+    const descriptions: Record<typeof behaviorPattern, string> = {
+        'AGGRESSIVE_HUNTER': `Este ativo caça liquidez agressivamente (${sweepRate.toFixed(0)}% dos níveis foram varridos). Alta probabilidade de atingir zonas de liquidez.`,
+        'SELECTIVE_HUNTER': `Este ativo é seletivo na captura de liquidez (${sweepRate.toFixed(0)}% dos níveis). Tende a buscar apenas níveis mais fortes.`,
+        'PASSIVE': `Este ativo frequentemente deixa liquidez para trás (apenas ${sweepRate.toFixed(0)}% capturado). Use stops mais largos.`,
+        'UNPREDICTABLE': `Padrão de captura inconsistente. Comportamento imprevisível em relação a zonas de liquidez.`
+    };
+
+    return {
+        toleranceScore: Math.round(toleranceScore),
+        avgSkippedLiquidity: avgSkip,
+        maxSkippedLiquidity: maxSkip,
+        behaviorPattern,
+        confidenceLevel: totalLevels >= 5 ? 'HIGH' : totalLevels >= 3 ? 'MEDIUM' : 'LOW',
+        description: descriptions[behaviorPattern]
+    };
+}
+
+// Calculate capture probability for each liquidity zone
+function calculateCaptureAnalysis(
+    currentPrice: number,
+    equalLevels: EqualLevel[],
+    atr: number,
+    toleranceProfile: LiquidityToleranceProfile,
+    marketDirection: 'SEEKING_BUYSIDE' | 'SEEKING_SELLSIDE' | 'BALANCED'
+): LiquidityCaptureAnalysis[] {
+    const analyses: LiquidityCaptureAnalysis[] = [];
+
+    // Analyze top 5 nearest levels
+    const sortedLevels = [...equalLevels]
+        .map(l => ({ ...l, distance: Math.abs(l.price - currentPrice) / currentPrice * 100 }))
+        .sort((a, b) => a.distance - b.distance)
+        .slice(0, 5);
+
+    for (const level of sortedLevels) {
+        const isBuyside = level.type === 'EQUAL_HIGHS';
+        const distancePercent = level.distance;
+        const atrDistance = Math.abs(level.price - currentPrice) / atr;
+
+        // Base probability from tolerance profile
+        let baseProbability = 100 - toleranceProfile.toleranceScore;
+
+        // Adjust by level strength
+        if (level.strength === 'STRONG') baseProbability += 15;
+        else if (level.strength === 'MODERATE') baseProbability += 5;
+
+        // Adjust by market direction alignment
+        if ((isBuyside && marketDirection === 'SEEKING_BUYSIDE') ||
+            (!isBuyside && marketDirection === 'SEEKING_SELLSIDE')) {
+            baseProbability += 20;
+        } else if (marketDirection !== 'BALANCED') {
+            baseProbability -= 15;
+        }
+
+        // Adjust by distance (closer = higher probability)
+        if (distancePercent < 0.5) baseProbability += 15;
+        else if (distancePercent < 1) baseProbability += 10;
+        else if (distancePercent > 3) baseProbability -= 20;
+
+        // Clamp probability
+        const captureProbability = Math.min(95, Math.max(5, baseProbability));
+
+        // Calculate timeframe
+        let expectedTimeframe = '1-2 semanas';
+        if (atrDistance < 1) expectedTimeframe = '2-4 horas';
+        else if (atrDistance < 2) expectedTimeframe = '4-8 horas';
+        else if (atrDistance < 3) expectedTimeframe = '1-2 dias';
+        else if (atrDistance < 5) expectedTimeframe = '3-5 dias';
+
+        // Risk to reward (simplified: distance to level / ATR as stop)
+        const riskToReward = distancePercent / (atr / currentPrice * 100);
+
+        const confidenceFactors: string[] = [];
+        const warningFactors: string[] = [];
+
+        if (level.strength === 'STRONG') confidenceFactors.push('Nível forte com múltiplos toques');
+        if (toleranceProfile.behaviorPattern === 'AGGRESSIVE_HUNTER') confidenceFactors.push('Ativo caça liquidez agressivamente');
+        if (marketDirection !== 'BALANCED' && ((isBuyside && marketDirection === 'SEEKING_BUYSIDE') || (!isBuyside && marketDirection === 'SEEKING_SELLSIDE'))) {
+            confidenceFactors.push('Direção do mercado alinhada');
+        }
+        if (distancePercent < 1) confidenceFactors.push('Nível muito próximo');
+
+        if (toleranceProfile.behaviorPattern === 'PASSIVE') warningFactors.push('Ativo frequentemente ignora liquidez');
+        if (distancePercent > 2) warningFactors.push('Distância considerável do preço atual');
+        if (level.strength === 'WEAK') warningFactors.push('Nível fraco, menor probabilidade');
+
+        analyses.push({
+            targetZone: {
+                price: level.price,
+                type: isBuyside ? 'BUYSIDE' : 'SELLSIDE',
+                strength: level.touches * 20
+            },
+            distancePercent,
+            captureProbability: Math.round(captureProbability),
+            expectedTimeframe,
+            riskToReward: Math.round(riskToReward * 100) / 100,
+            confidenceFactors,
+            warningFactors
+        });
+    }
+
+    return analyses.sort((a, b) => b.captureProbability - a.captureProbability);
+}
+
+// Calculate investment size analysis
+function calculateInvestmentAnalysis(
+    candles: YahooCandle[],
+    currentPrice: number,
+    assetClass: string
+): InvestmentSizeAnalysis[] {
+    // Calculate average daily volume
+    const recentCandles = candles.slice(-24); // Last 24 hours
+    const avgVolume = recentCandles.reduce((sum, c) => sum + c.volume, 0) / recentCandles.length;
+    const avgDailyVolume = avgVolume * 24; // Approximate daily volume
+    const avgDailyValue = avgDailyVolume * currentPrice;
+
+    // Investment tiers
+    const tiers: { 
+        tier: InvestmentSizeAnalysis['tier']; 
+        min: number; 
+        max: number; 
+        range: string 
+    }[] = [
+        { tier: 'RETAIL', min: 1000, max: 10000, range: '$1K - $10K' },
+        { tier: 'SMALL_INST', min: 10000, max: 100000, range: '$10K - $100K' },
+        { tier: 'MEDIUM_INST', min: 100000, max: 1000000, range: '$100K - $1M' },
+        { tier: 'LARGE_INST', min: 1000000, max: 10000000, range: '$1M - $10M' }
+    ];
+
+    return tiers.map(({ tier, min, max, range }) => {
+        const midInvestment = (min + max) / 2;
+        const volumeParticipation = avgDailyValue > 0 ? (midInvestment / avgDailyValue) * 100 : 100;
+
+        // Slippage estimate based on participation rate
+        let slippageEstimate = 0.01; // 0.01% base
+        if (volumeParticipation > 10) slippageEstimate = 0.5;
+        else if (volumeParticipation > 5) slippageEstimate = 0.25;
+        else if (volumeParticipation > 1) slippageEstimate = 0.1;
+        else if (volumeParticipation > 0.5) slippageEstimate = 0.05;
+
+        // Adjust by asset class
+        if (assetClass === 'crypto') slippageEstimate *= 2;
+        if (assetClass === 'forex') slippageEstimate *= 0.5;
+
+        // Determine adequacy
+        let liquidityAdequacy: InvestmentSizeAnalysis['liquidityAdequacy'] = 'EXCELLENT';
+        if (volumeParticipation > 10) liquidityAdequacy = 'INSUFFICIENT';
+        else if (volumeParticipation > 5) liquidityAdequacy = 'POOR';
+        else if (volumeParticipation > 2) liquidityAdequacy = 'ADEQUATE';
+        else if (volumeParticipation > 0.5) liquidityAdequacy = 'GOOD';
+
+        // Max position (1% of daily volume for minimal impact)
+        const maxPositionSize = avgDailyValue * 0.01;
+
+        const recommendations: Record<typeof liquidityAdequacy, string> = {
+            'EXCELLENT': 'Liquidez excelente. Execute sem preocupações de slippage.',
+            'GOOD': 'Boa liquidez. Pequeno impacto esperado, use limit orders.',
+            'ADEQUATE': 'Liquidez adequada. Divida a ordem em partes menores.',
+            'POOR': 'Liquidez fraca. Alto risco de slippage, considere reduzir tamanho.',
+            'INSUFFICIENT': 'Liquidez insuficiente. Não recomendado para este tamanho de posição.'
+        };
+
+        return {
+            tier,
+            investmentRange: range,
+            slippageEstimate: Math.round(slippageEstimate * 100) / 100,
+            liquidityAdequacy,
+            maxPositionSize: Math.round(maxPositionSize),
+            avgDailyVolume: Math.round(avgDailyVolume),
+            volumeParticipation: Math.round(volumeParticipation * 100) / 100,
+            recommendation: recommendations[liquidityAdequacy]
+        };
+    });
+}
+
+// Calculate historical liquidity behavior
+function calculateHistoricalBehavior(
+    candles: YahooCandle[],
+    equalLevels: EqualLevel[],
+    atr: number,
+    assetClass: string
+): HistoricalLiquidityBehavior {
+    const recentSweeps: HistoricalLiquidityBehavior['recentSweeps'] = [];
+    let sweepCount = 0;
+    let totalMagnitude = 0;
+    let totalRetracement = 0;
+
+    // Analyze sweeps in historical data
+    for (let i = 10; i < candles.length - 5; i++) {
+        const prevHigh = Math.max(...candles.slice(i - 10, i).map(c => c.high));
+        const prevLow = Math.min(...candles.slice(i - 10, i).map(c => c.low));
+        const curr = candles[i];
+        const nextCandles = candles.slice(i + 1, i + 6);
+
+        // Check for buyside sweep
+        if (curr.high > prevHigh * 1.001) {
+            const magnitude = (curr.high - prevHigh) / prevHigh * 100;
+            const retracementLow = Math.min(...nextCandles.map(c => c.low));
+            const retracement = (curr.high - retracementLow) / curr.high * 100;
+            const wasSuccessful = retracement > magnitude * 0.5;
+
+            if (magnitude > 0.1) {
+                sweepCount++;
+                totalMagnitude += magnitude;
+                totalRetracement += retracement;
+                if (recentSweeps.length < 5) {
+                    recentSweeps.push({
+                        timestamp: new Date(curr.timestamp * 1000).toISOString(),
+                        type: 'BUYSIDE',
+                        magnitude: Math.round(magnitude * 100) / 100,
+                        wasSuccessful
+                    });
+                }
+            }
+        }
+
+        // Check for sellside sweep
+        if (curr.low < prevLow * 0.999) {
+            const magnitude = (prevLow - curr.low) / prevLow * 100;
+            const retracementHigh = Math.max(...nextCandles.map(c => c.high));
+            const retracement = (retracementHigh - curr.low) / curr.low * 100;
+            const wasSuccessful = retracement > magnitude * 0.5;
+
+            if (magnitude > 0.1) {
+                sweepCount++;
+                totalMagnitude += magnitude;
+                totalRetracement += retracement;
+                if (recentSweeps.length < 5) {
+                    recentSweeps.push({
+                        timestamp: new Date(curr.timestamp * 1000).toISOString(),
+                        type: 'SELLSIDE',
+                        magnitude: Math.round(magnitude * 100) / 100,
+                        wasSuccessful
+                    });
+                }
+            }
+        }
+    }
+
+    // Calculate weekly sweep frequency
+    const weeksOfData = candles.length / (24 * 7); // Assuming hourly candles
+    const sweepFrequency = weeksOfData > 0 ? sweepCount / weeksOfData : 0;
+
+    // Fakeout rate
+    const successfulSweeps = recentSweeps.filter(s => s.wasSuccessful).length;
+    const fakeoutRate = recentSweeps.length > 0 
+        ? ((recentSweeps.length - successfulSweeps) / recentSweeps.length) * 100 
+        : 50;
+
+    // Determine preferred session based on asset class
+    const sessionMap: Record<string, HistoricalLiquidityBehavior['preferredSweepSession']> = {
+        forex: 'OVERLAP',
+        etf: 'NEW_YORK',
+        crypto: 'ASIA',
+        commodity: 'NEW_YORK',
+        index: 'NEW_YORK'
+    };
+
+    // Analyze day-of-week patterns (simplified)
+    const mondayCandles = candles.filter(c => new Date(c.timestamp * 1000).getDay() === 1);
+    const fridayCandles = candles.filter(c => new Date(c.timestamp * 1000).getDay() === 5);
+
+    const mondayBullish = mondayCandles.filter(c => c.close > c.open).length / (mondayCandles.length || 1);
+    const fridayBullish = fridayCandles.filter(c => c.close > c.open).length / (fridayCandles.length || 1);
+
+    return {
+        sweepFrequency: Math.round(sweepFrequency * 10) / 10,
+        avgSweepMagnitude: sweepCount > 0 ? Math.round(totalMagnitude / sweepCount * 100) / 100 : 0,
+        avgRetracementAfterSweep: sweepCount > 0 ? Math.round(totalRetracement / sweepCount * 100) / 100 : 0,
+        preferredSweepSession: sessionMap[assetClass] || 'NEW_YORK',
+        typicalSweepDuration: sweepFrequency > 5 ? '2-4 horas' : sweepFrequency > 2 ? '4-8 horas' : '1-2 dias',
+        fakeoutRate: Math.round(fakeoutRate),
+        patterns: {
+            mondayBias: mondayBullish > 0.55 ? 'BUYSIDE' : mondayBullish < 0.45 ? 'SELLSIDE' : 'NEUTRAL',
+            fridayBias: fridayBullish > 0.55 ? 'BUYSIDE' : fridayBullish < 0.45 ? 'SELLSIDE' : 'NEUTRAL',
+            monthEndBias: 'NEUTRAL' // Would need more data to determine
+        },
+        recentSweeps
+    };
+}
+
+// Calculate liquidity-based price targets
+function calculateLiquidityPriceTargets(
+    currentPrice: number,
+    equalLevels: EqualLevel[],
+    marketDirection: 'SEEKING_BUYSIDE' | 'SEEKING_SELLSIDE' | 'BALANCED',
+    toleranceProfile: LiquidityToleranceProfile,
+    atr: number
+): LiquidityPriceTarget {
+    const buysideLevels = equalLevels
+        .filter(e => e.type === 'EQUAL_HIGHS' && e.price > currentPrice)
+        .sort((a, b) => a.price - b.price);
+
+    const sellsideLevels = equalLevels
+        .filter(e => e.type === 'EQUAL_LOWS' && e.price < currentPrice)
+        .sort((a, b) => b.price - a.price);
+
+    // Determine direction based on market direction and available liquidity
+    let direction: 'LONG' | 'SHORT' = 'LONG';
+    let primaryTarget = currentPrice + atr * 2;
+    let secondaryTarget = currentPrice + atr * 3;
+    let invalidationLevel = currentPrice - atr;
+    let primaryProbability = 50;
+    let secondaryProbability = 30;
+
+    if (marketDirection === 'SEEKING_BUYSIDE' && buysideLevels.length > 0) {
+        direction = 'LONG';
+        primaryTarget = buysideLevels[0].price;
+        secondaryTarget = buysideLevels[1]?.price || primaryTarget * 1.01;
+        invalidationLevel = sellsideLevels[0]?.price || currentPrice - atr;
+        primaryProbability = 100 - toleranceProfile.toleranceScore + (buysideLevels[0].touches * 5);
+        secondaryProbability = primaryProbability * 0.6;
+    } else if (marketDirection === 'SEEKING_SELLSIDE' && sellsideLevels.length > 0) {
+        direction = 'SHORT';
+        primaryTarget = sellsideLevels[0].price;
+        secondaryTarget = sellsideLevels[1]?.price || primaryTarget * 0.99;
+        invalidationLevel = buysideLevels[0]?.price || currentPrice + atr;
+        primaryProbability = 100 - toleranceProfile.toleranceScore + (sellsideLevels[0].touches * 5);
+        secondaryProbability = primaryProbability * 0.6;
+    } else if (buysideLevels.length > 0 && sellsideLevels.length > 0) {
+        // Balanced - choose side with stronger liquidity
+        const buysideStrength = buysideLevels.reduce((sum, l) => sum + l.touches, 0);
+        const sellsideStrength = sellsideLevels.reduce((sum, l) => sum + l.touches, 0);
+
+        if (buysideStrength >= sellsideStrength) {
+            direction = 'LONG';
+            primaryTarget = buysideLevels[0].price;
+            secondaryTarget = buysideLevels[1]?.price || primaryTarget * 1.01;
+            invalidationLevel = sellsideLevels[0]?.price || currentPrice - atr;
+        } else {
+            direction = 'SHORT';
+            primaryTarget = sellsideLevels[0].price;
+            secondaryTarget = sellsideLevels[1]?.price || primaryTarget * 0.99;
+            invalidationLevel = buysideLevels[0]?.price || currentPrice + atr;
+        }
+        primaryProbability = 45;
+        secondaryProbability = 25;
+    }
+
+    // Clamp probabilities
+    primaryProbability = Math.min(85, Math.max(15, primaryProbability));
+    secondaryProbability = Math.min(70, Math.max(10, secondaryProbability));
+
+    // Calculate time horizon
+    const distancePct = Math.abs(primaryTarget - currentPrice) / currentPrice * 100;
+    let timeHorizon = '1-2 semanas';
+    if (distancePct < 0.5) timeHorizon = '4-8 horas';
+    else if (distancePct < 1) timeHorizon = '1-2 dias';
+    else if (distancePct < 2) timeHorizon = '3-5 dias';
+
+    const rationale: string[] = [];
+    const riskFactors: string[] = [];
+
+    if (marketDirection !== 'BALANCED') {
+        rationale.push(`Mercado buscando liquidez ${direction === 'LONG' ? 'acima (buyside)' : 'abaixo (sellside)'}`);
+    }
+    if (toleranceProfile.behaviorPattern === 'AGGRESSIVE_HUNTER') {
+        rationale.push('Ativo historicamente captura liquidez de forma agressiva');
+    }
+    if (direction === 'LONG' && buysideLevels[0]?.strength === 'STRONG') {
+        rationale.push('Nível de liquidez forte com múltiplos toques');
+    }
+    if (direction === 'SHORT' && sellsideLevels[0]?.strength === 'STRONG') {
+        rationale.push('Nível de liquidez forte com múltiplos toques');
+    }
+
+    if (toleranceProfile.behaviorPattern === 'PASSIVE') {
+        riskFactors.push('Ativo pode não capturar a liquidez');
+    }
+    if (distancePct > 2) {
+        riskFactors.push('Distância considerável até o alvo');
+    }
+    if (marketDirection === 'BALANCED') {
+        riskFactors.push('Direção do mercado indefinida');
+    }
+
+    return {
+        direction,
+        primaryTarget: Math.round(primaryTarget * 10000) / 10000,
+        primaryProbability: Math.round(primaryProbability),
+        secondaryTarget: Math.round(secondaryTarget * 10000) / 10000,
+        secondaryProbability: Math.round(secondaryProbability),
+        invalidationLevel: Math.round(invalidationLevel * 10000) / 10000,
+        timeHorizon,
+        rationale,
+        riskFactors
+    };
+}
+
+// Multi-timeframe liquidity analysis
+async function calculateMTFLiquidity(
+    symbol: string,
+    currentPrice: number
+): Promise<MultiTimeframeLiquidity> {
+    const defaultBias = { bias: 'NEUTRAL' as const, nearestLiquidity: currentPrice, distance: 0 };
+
+    // Fetch different timeframes
+    const [m15Candles, h1Candles, h4Candles, d1Candles] = await Promise.all([
+        fetchCandles(symbol, '5d', '15m'),
+        fetchCandles(symbol, '1mo', '1h'),
+        fetchCandles(symbol, '3mo', '4h'),
+        fetchCandles(symbol, '1y', '1d')
+    ]);
+
+    const analyzeTimeframe = (candles: YahooCandle[], tolerance: number) => {
+        if (candles.length < 20) return defaultBias;
+
+        const levels = findEqualLevels(candles, tolerance);
+        const buyside = levels.filter(l => l.type === 'EQUAL_HIGHS' && l.price > currentPrice);
+        const sellside = levels.filter(l => l.type === 'EQUAL_LOWS' && l.price < currentPrice);
+
+        const nearestBuy = buyside.sort((a, b) => a.price - b.price)[0];
+        const nearestSell = sellside.sort((a, b) => b.price - a.price)[0];
+
+        let bias: 'BUYSIDE' | 'SELLSIDE' | 'NEUTRAL' = 'NEUTRAL';
+        let nearestLiquidity = currentPrice;
+        let distance = 0;
+
+        if (nearestBuy && nearestSell) {
+            const buyDist = (nearestBuy.price - currentPrice) / currentPrice;
+            const sellDist = (currentPrice - nearestSell.price) / currentPrice;
+            if (buyDist < sellDist) {
+                bias = 'BUYSIDE';
+                nearestLiquidity = nearestBuy.price;
+                distance = buyDist * 100;
+            } else {
+                bias = 'SELLSIDE';
+                nearestLiquidity = nearestSell.price;
+                distance = sellDist * 100;
+            }
+        } else if (nearestBuy) {
+            bias = 'BUYSIDE';
+            nearestLiquidity = nearestBuy.price;
+            distance = ((nearestBuy.price - currentPrice) / currentPrice) * 100;
+        } else if (nearestSell) {
+            bias = 'SELLSIDE';
+            nearestLiquidity = nearestSell.price;
+            distance = ((currentPrice - nearestSell.price) / currentPrice) * 100;
+        }
+
+        return { bias, nearestLiquidity: Math.round(nearestLiquidity * 10000) / 10000, distance: Math.round(distance * 100) / 100 };
+    };
+
+    const m15 = analyzeTimeframe(m15Candles, 0.001);
+    const h1 = analyzeTimeframe(h1Candles, 0.002);
+    const h4 = analyzeTimeframe(h4Candles, 0.005);
+    const d1 = analyzeTimeframe(d1Candles, 0.01);
+
+    // Determine alignment
+    const biases = [m15.bias, h1.bias, h4.bias, d1.bias];
+    const buysideCount = biases.filter(b => b === 'BUYSIDE').length;
+    const sellsideCount = biases.filter(b => b === 'SELLSIDE').length;
+
+    let alignment: MultiTimeframeLiquidity['alignment'] = 'NEUTRAL';
+    if (buysideCount >= 3) alignment = 'ALIGNED_BUYSIDE';
+    else if (sellsideCount >= 3) alignment = 'ALIGNED_SELLSIDE';
+    else if (buysideCount >= 1 && sellsideCount >= 1) alignment = 'CONFLICTING';
+
+    // Determine strongest timeframe (by distance - closer = more relevant)
+    const timeframes = [
+        { tf: 'M15' as const, dist: m15.distance },
+        { tf: 'H1' as const, dist: h1.distance },
+        { tf: 'H4' as const, dist: h4.distance },
+        { tf: 'D1' as const, dist: d1.distance }
+    ];
+    const strongest = timeframes.filter(t => t.dist > 0).sort((a, b) => a.dist - b.dist)[0];
+
+    return {
+        m15,
+        h1,
+        h4,
+        d1,
+        alignment,
+        strongestTimeframe: strongest?.tf || 'H1'
+    };
+}
+
+// Calculate overall liquidity score
+function calculateLiquidityScore(
+    toleranceProfile: LiquidityToleranceProfile,
+    captureAnalysis: LiquidityCaptureAnalysis[],
+    mtfLiquidity: MultiTimeframeLiquidity,
+    historicalBehavior: HistoricalLiquidityBehavior
+): number {
+    let score = 50; // Base score
+
+    // Tolerance profile contribution (max 25 pts)
+    if (toleranceProfile.behaviorPattern === 'AGGRESSIVE_HUNTER') score += 25;
+    else if (toleranceProfile.behaviorPattern === 'SELECTIVE_HUNTER') score += 15;
+    else if (toleranceProfile.behaviorPattern === 'PASSIVE') score += 5;
+
+    // Capture probability contribution (max 20 pts)
+    if (captureAnalysis.length > 0) {
+        const topCapture = captureAnalysis[0].captureProbability;
+        score += (topCapture / 100) * 20;
+    }
+
+    // MTF alignment contribution (max 15 pts)
+    if (mtfLiquidity.alignment === 'ALIGNED_BUYSIDE' || mtfLiquidity.alignment === 'ALIGNED_SELLSIDE') {
+        score += 15;
+    } else if (mtfLiquidity.alignment === 'CONFLICTING') {
+        score -= 5;
+    }
+
+    // Historical behavior contribution (max 10 pts)
+    if (historicalBehavior.fakeoutRate < 30) score += 10;
+    else if (historicalBehavior.fakeoutRate < 50) score += 5;
+    else score -= 5;
+
+    return Math.min(100, Math.max(0, Math.round(score)));
+}
+
 async function analyzeLiquidity(
     symbol: string, 
     assetClass: 'forex' | 'etf' | 'crypto' | 'commodity' | 'index'
@@ -629,6 +1299,37 @@ async function analyzeLiquidity(
     // Get COT data for forex
     const cotData = assetClass === 'forex' ? await fetchCOTData(symbol) : undefined;
     
+    // ============================================================================
+    // ADVANCED LIQUIDITY ANALYSIS
+    // ============================================================================
+    
+    // 1. Liquidity Tolerance Profile - how much this asset tolerates leaving liquidity
+    const toleranceProfile = calculateLiquidityTolerance(candles, equalLevels, atr);
+    
+    // 2. Capture Analysis - probability of reaching each liquidity zone
+    const captureAnalysis = calculateCaptureAnalysis(
+        currentPrice, equalLevels, atr, toleranceProfile, marketDirection
+    );
+    
+    // 3. Investment Size Analysis - slippage and adequacy per investment tier
+    const investmentAnalysis = calculateInvestmentAnalysis(candles, currentPrice, assetClass);
+    
+    // 4. Historical Behavior - sweep patterns and frequency
+    const historicalBehavior = calculateHistoricalBehavior(candles, equalLevels, atr, assetClass);
+    
+    // 5. Price Targets - expected targets based on liquidity
+    const priceTargets = calculateLiquidityPriceTargets(
+        currentPrice, equalLevels, marketDirection, toleranceProfile, atr
+    );
+    
+    // 6. Multi-Timeframe Liquidity Analysis
+    const mtfLiquidity = await calculateMTFLiquidity(symbol, currentPrice);
+    
+    // 7. Overall Liquidity Score
+    const liquidityScore = calculateLiquidityScore(
+        toleranceProfile, captureAnalysis, mtfLiquidity, historicalBehavior
+    );
+    
     return {
         symbol,
         displaySymbol: symbol.replace('=X', '').replace('-USD', '').replace('=F', '').replace('^', ''),
@@ -646,6 +1347,14 @@ async function analyzeLiquidity(
         timing,
         source,
         cotData,
+        // Advanced analysis
+        toleranceProfile,
+        captureAnalysis,
+        investmentAnalysis,
+        historicalBehavior,
+        priceTargets,
+        mtfLiquidity,
+        liquidityScore,
         timestamp: new Date().toISOString()
     };
 }
