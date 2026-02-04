@@ -420,47 +420,66 @@ async function fetchMesoInputs(): Promise<{
     return { instruments: [], prohibited: [], context: { favoredDirection: 'NEUTRAL', volatilityContext: 'NORMAL', regime: 'NEUTRAL', bias: 'NEUTRAL', classAnalysis: {} } };
 }
 
-// Fetch market data for a symbol
+// Fetch market data for symbols in batches to avoid URL length limits
 async function fetchMarketData(symbols: string[]): Promise<Map<string, { price: number; high: number; low: number; volume: number; avgVolume: number; rsi: number; history: number[]; name?: string; assetClass?: string }>> {
     const result = new Map();
-    try {
-        const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000';
-        if (symbols.length === 0) return result;
-        const symbolsParam = symbols.map((s) => String(s || '').trim()).filter(Boolean).join(',');
-        const res = await fetch(`${baseUrl}/api/market?symbols=${encodeURIComponent(symbolsParam)}&macro=0`, { cache: 'no-store' });
-        const data = await res.json();
-        if (data.success && Array.isArray(data.data)) {
-            for (const asset of data.data) {
-                const aSym = typeof asset.symbol === 'string' ? asset.symbol : '';
-                const aDisp = typeof asset.displaySymbol === 'string' ? asset.displaySymbol : '';
-                const normalize = (s: string) => s.replace('=X', '').replace('-USD', '').replace('=F', '');
-                const aN = normalize(aSym || aDisp);
-                const matches = symbols.some((s) => {
-                    const sN = normalize(s);
-                    return s === aSym || s === aDisp || sN === aN;
-                });
-
-                if (matches) {
-                    const payload = {
-                        price: asset.price,
-                        high: asset.high,
-                        low: asset.low,
-                        volume: asset.volume,
-                        avgVolume: typeof asset.avgVolume === 'number' && Number.isFinite(asset.avgVolume) ? asset.avgVolume : 0,
-                        rsi: asset.rsi,
-                        history: asset.history || [],
-                        name: typeof asset.name === 'string' ? asset.name : undefined,
-                        assetClass: typeof asset.assetClass === 'string' ? asset.assetClass : undefined,
-                    };
-
-                    if (aSym) result.set(aSym, payload);
-                    if (aDisp) result.set(aDisp, payload);
-                }
-            }
-        }
-    } catch (e) {
-        serverLog('warn', 'micro_market_fetch_failed', { error: String(e) }, 'api/micro');
+    const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000';
+    if (symbols.length === 0) return result;
+    
+    // Batch symbols to avoid URL length limits (max 50 per request)
+    const BATCH_SIZE = 50;
+    const batches: string[][] = [];
+    for (let i = 0; i < symbols.length; i += BATCH_SIZE) {
+        batches.push(symbols.slice(i, i + BATCH_SIZE));
     }
+    
+    // Process batches in parallel (max 3 concurrent)
+    const batchResults = await mapWithConcurrency(batches, 3, async (batch) => {
+        try {
+            const symbolsParam = batch.map((s) => String(s || '').trim()).filter(Boolean).join(',');
+            const res = await fetch(`${baseUrl}/api/market?symbols=${encodeURIComponent(symbolsParam)}&macro=0`, { cache: 'no-store' });
+            const data = await res.json();
+            if (data.success && Array.isArray(data.data)) {
+                return data.data;
+            }
+            return [];
+        } catch (e) {
+            serverLog('warn', 'micro_market_batch_failed', { error: String(e), batch: batch.slice(0, 5) }, 'api/micro');
+            return [];
+        }
+    });
+    
+    // Merge all batch results
+    const allAssets = batchResults.flat();
+    
+    for (const asset of allAssets) {
+        const aSym = typeof asset.symbol === 'string' ? asset.symbol : '';
+        const aDisp = typeof asset.displaySymbol === 'string' ? asset.displaySymbol : '';
+        const normalize = (s: string) => s.replace('=X', '').replace('-USD', '').replace('=F', '');
+        const aN = normalize(aSym || aDisp);
+        const matches = symbols.some((s) => {
+            const sN = normalize(s);
+            return s === aSym || s === aDisp || sN === aN;
+        });
+
+        if (matches) {
+            const payload = {
+                price: asset.price,
+                high: asset.high,
+                low: asset.low,
+                volume: asset.volume,
+                avgVolume: typeof asset.avgVolume === 'number' && Number.isFinite(asset.avgVolume) ? asset.avgVolume : 0,
+                rsi: asset.rsi,
+                history: asset.history || [],
+                name: typeof asset.name === 'string' ? asset.name : undefined,
+                assetClass: typeof asset.assetClass === 'string' ? asset.assetClass : undefined,
+            };
+
+            if (aSym) result.set(aSym, payload);
+            if (aDisp) result.set(aDisp, payload);
+        }
+    }
+    
     return result;
 }
 
