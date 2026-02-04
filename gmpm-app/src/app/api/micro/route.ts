@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { serverLog } from '@/lib/serverLogs';
+import { calculateKelly, RISK_PARAMS_EXPORT } from '@/lib/riskManager';
 
 // Types
 interface MesoInput {
@@ -157,6 +158,10 @@ interface MicroAnalysis {
             rrMin: number;
             evR: number;
             modelRisk: 'LOW' | 'MED' | 'HIGH';
+            // Institutional position sizing
+            kellyFraction?: number;
+            positionSizePercent?: number;
+            kellyEdge?: 'STRONG' | 'MODERATE' | 'WEAK' | 'NEGATIVE';
         };
     };
     scenarioAnalysis?: {
@@ -1043,7 +1048,26 @@ function generateRecommendation(setups: Setup[], technical?: TechnicalAnalysis):
         const rr = Number.isFinite(best.riskReward) ? best.riskReward : 0;
         const evR = (pWin * rr) - (1 - pWin);
 
-        return { pWin, rrMin, evR, modelRisk };
+        // Calculate Kelly-based position sizing
+        const kellyConfidence = modelRisk === 'LOW' ? 'HIGH' : modelRisk === 'MED' ? 'MEDIUM' : 'LOW';
+        const kelly = calculateKelly(pWin, rr, 1.0, kellyConfidence as 'HIGH' | 'MEDIUM' | 'LOW');
+        
+        // Cap position size at institutional limits
+        const positionSizePercent = Math.min(
+            kelly.maxPosition,
+            RISK_PARAMS_EXPORT.MAX_SINGLE_POSITION
+        );
+
+        return { 
+            pWin, 
+            rrMin, 
+            evR, 
+            modelRisk,
+            // Institutional position sizing
+            kellyFraction: kelly.recommended,
+            positionSizePercent,
+            kellyEdge: kelly.edgeQuality,
+        };
     };
 
     const metrics = estimateRecommendationMetrics();

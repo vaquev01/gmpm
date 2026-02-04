@@ -800,6 +800,9 @@ export function calculateRegimeSnapshot(inputs: MacroInputs): RegimeSnapshot {
     // Generate alerts
     const alerts = generateAlerts(axes, regime);
 
+    // Detect regime transitions using stored history
+    const transitionWarning = detectRegimeTransition(regime, axes);
+    
     return {
         timestamp,
         regime,
@@ -809,10 +812,104 @@ export function calculateRegimeSnapshot(inputs: MacroInputs): RegimeSnapshot {
         alerts,
         mesoTilts,
         mesoProhibitions,
-        transitionWarning: null, // TODO: implement hysteresis
+        transitionWarning,
         lastConfirmedRegime: regime,
         lastConfirmedAt: timestamp,
     };
+}
+
+// =============================================================================
+// REGIME TRANSITION DETECTION
+// =============================================================================
+
+// Store recent regime readings for transition detection
+const regimeHistory: { timestamp: number; regime: RegimeType; axes: Record<string, number> }[] = [];
+const MAX_HISTORY_LENGTH = 20;
+const TRANSITION_WINDOW_MS = 4 * 60 * 60 * 1000; // 4 hours
+
+/**
+ * Detect if regime is transitioning based on axis momentum
+ */
+function detectRegimeTransition(
+    currentRegime: RegimeType,
+    axes: RegimeSnapshot['axes']
+): string | null {
+    const now = Date.now();
+    
+    // Add current reading to history
+    regimeHistory.push({
+        timestamp: now,
+        regime: currentRegime,
+        axes: {
+            G: axes.G.score,
+            I: axes.I.score,
+            L: axes.L.score,
+            C: axes.C.score,
+            D: axes.D.score,
+            V: axes.V.score,
+        },
+    });
+    
+    // Trim old history
+    while (regimeHistory.length > MAX_HISTORY_LENGTH) {
+        regimeHistory.shift();
+    }
+    
+    // Need at least 3 readings for transition detection
+    if (regimeHistory.length < 3) return null;
+    
+    // Filter to recent window
+    const recentHistory = regimeHistory.filter(h => now - h.timestamp < TRANSITION_WINDOW_MS);
+    if (recentHistory.length < 3) return null;
+    
+    // Check for regime instability (multiple changes)
+    const regimeChanges = new Set(recentHistory.map(h => h.regime));
+    if (regimeChanges.size >= 3) {
+        return `⚠️ Regime instável: ${regimeChanges.size} regimes diferentes nas últimas 4h. Reduzir exposição.`;
+    }
+    
+    // Check for axis momentum (trending towards transition)
+    const oldestReading = recentHistory[0];
+    const latestReading = recentHistory[recentHistory.length - 1];
+    
+    const axisMomentum: Record<string, number> = {};
+    for (const axis of ['G', 'I', 'L', 'C', 'V'] as const) {
+        axisMomentum[axis] = latestReading.axes[axis] - oldestReading.axes[axis];
+    }
+    
+    // Critical transitions to watch
+    const warnings: string[] = [];
+    
+    // Liquidity deteriorating rapidly
+    if (axisMomentum.L < -0.5 && axes.L.score < 0) {
+        warnings.push('Liquidez deteriorando → possível LIQUIDITY_DRAIN');
+    }
+    
+    // Credit stress building
+    if (axisMomentum.C < -0.4 && axes.C.score < -0.3) {
+        warnings.push('Stress de crédito aumentando → possível CREDIT_STRESS');
+    }
+    
+    // Volatility spiking
+    if (axisMomentum.V > 0.5 && axes.V.score > 0.5) {
+        warnings.push('Volatilidade subindo rapidamente → reduzir sizing');
+    }
+    
+    // Growth collapsing
+    if (axisMomentum.G < -0.5 && axes.G.score < -0.3) {
+        warnings.push('Crescimento deteriorando → possível DEFLATION/STAGFLATION');
+    }
+    
+    // Moving from risk-off to risk-on
+    if (axisMomentum.L > 0.4 && axisMomentum.G > 0.3 && currentRegime !== 'GOLDILOCKS') {
+        warnings.push('Melhora em L e G → possível transição para RISK_ON/GOLDILOCKS');
+    }
+    
+    if (warnings.length > 0) {
+        return `🔄 TRANSIÇÃO: ${warnings.join('; ')}`;
+    }
+    
+    return null;
 }
 
 // =============================================================================
