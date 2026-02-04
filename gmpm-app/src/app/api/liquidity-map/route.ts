@@ -71,16 +71,18 @@ async function fetchCandles(symbol: string, period: string = '1mo', interval: st
         );
         
         if (!res.ok) return [];
-        const data = await res.json();
+        const json = await res.json();
         
-        if (!data.success || !Array.isArray(data.candles)) return [];
+        // Handle both formats: data.candles or candles directly
+        const candles = json.data?.candles || json.candles || [];
+        if (!json.success || !Array.isArray(candles)) return [];
         
-        return data.candles.map((c: { open: number; high: number; low: number; close: number; volume: number; timestamp: number }) => ({
+        return candles.map((c: { open: number; high: number; low: number; close: number; volume: number; timestamp: number }) => ({
             open: c.open,
             high: c.high,
             low: c.low,
             close: c.close,
-            volume: c.volume || 0,
+            volume: c.volume || 1, // Use 1 as fallback for Forex (no volume data)
             timestamp: c.timestamp
         }));
     } catch {
