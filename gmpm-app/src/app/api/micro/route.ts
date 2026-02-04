@@ -1284,23 +1284,51 @@ export async function GET(request: Request) {
             analyses.push(analysis);
         }
 
-        analyses.sort((a, b) => {
-            const order = (x: MicroAnalysis['recommendation']['action']) => x === 'EXECUTE' ? 0 : x === 'WAIT' ? 1 : 2;
-            const orderDiff = order(a.recommendation.action) - order(b.recommendation.action);
-            if (orderDiff !== 0) return orderDiff;
-            return (b.recommendation.bestSetup?.technicalScore || 0) - (a.recommendation.bestSetup?.technicalScore || 0);
+        // Calculate composite ranking score for each analysis
+        const rankedAnalyses = analyses.map(a => {
+            let rankScore = 0;
+            
+            // 1. Action priority (40 pts max)
+            if (a.recommendation.action === 'EXECUTE') rankScore += 40;
+            else if (a.recommendation.action === 'WAIT') rankScore += 20;
+            // AVOID = 0
+            
+            // 2. Scenario status (25 pts max)
+            if (a.scenarioAnalysis?.status === 'PRONTO') rankScore += 25;
+            else if (a.scenarioAnalysis?.status === 'DESENVOLVENDO') rankScore += 10;
+            // CONTRA = 0
+            
+            // 3. Technical score from setup (20 pts max)
+            const techScore = a.recommendation?.bestSetup?.technicalScore || 0;
+            rankScore += Math.min(20, techScore / 5); // 100 tech score = 20 pts
+            
+            // 4. Risk/Reward (10 pts max)
+            const rr = a.recommendation?.metrics?.rrMin || 0;
+            rankScore += Math.min(10, rr * 3); // 3+ RR = 10 pts
+            
+            // 5. Entry quality (5 pts max)
+            if (a.scenarioAnalysis?.entryQuality === 'OTIMO') rankScore += 5;
+            else if (a.scenarioAnalysis?.entryQuality === 'BOM') rankScore += 3;
+            
+            return { ...a, rankScore: Math.round(rankScore) };
         });
+        
+        // Sort by composite rank score (highest first)
+        rankedAnalyses.sort((a, b) => b.rankScore - a.rankScore);
+        
+        // Add rank position
+        const finalAnalyses = rankedAnalyses.map((a, idx) => ({ ...a, rank: idx + 1 }));
 
-        const executeReady = analyses.filter(a => a.recommendation.action === 'EXECUTE').length;
-        const withSetups = analyses.filter(a => a.setups.length > 0).length;
+        const executeReady = finalAnalyses.filter(a => a.recommendation.action === 'EXECUTE').length;
+        const withSetups = finalAnalyses.filter(a => a.setups.length > 0).length;
 
         return NextResponse.json({
             success: true,
             timestamp: new Date().toISOString(),
-            analyses,
+            analyses: finalAnalyses,
             mesoContext: context,
             summary: {
-                total: analyses.length,
+                total: finalAnalyses.length,
                 withSetups,
                 executeReady,
                 regime: context.regime,
