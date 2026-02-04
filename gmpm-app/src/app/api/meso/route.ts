@@ -819,7 +819,7 @@ export async function GET() {
             const classInfo = ASSET_CLASSES[cls.class as keyof typeof ASSET_CLASSES];
             if (!classInfo) continue;
 
-            // For AVOID classes: add specific avoid items to prohibited but still include some for monitoring
+            // For AVOID classes: add ALL symbols as WATCHLIST for monitoring
             if (cls.direction === 'AVOID') {
                 cls.avoidList.forEach(avoid => {
                     prohibitedInstruments.push({
@@ -828,31 +828,31 @@ export async function GET() {
                     });
                 });
                 
-                // Still add top symbols for WATCHLIST (lower score, cautionary)
-                const watchlistScore = 20; // Low conviction for monitoring only
-                classInfo.symbols.slice(0, 5).forEach((sym, idx) => {
+                // Add ALL class symbols for WATCHLIST monitoring
+                const watchlistScore = 20;
+                classInfo.symbols.forEach((sym, idx) => {
                     if (!cls.avoidList.includes(sym)) {
                         allowedInstruments.push({
                             symbol: sym,
                             direction: cls.expectation === 'BEARISH' ? 'SHORT' : 'LONG',
                             class: cls.name,
                             reason: `[WATCHLIST] ${cls.name} - regime suggests caution`,
-                            score: watchlistScore - idx
+                            score: watchlistScore - (idx * 0.1)
                         });
                     }
                 });
                 continue;
             }
             
-            // For LOW confidence: still include but with lower priority
+            // For LOW confidence: include ALL symbols with lower priority
             if (cls.confidence === 'LOW') {
-                classInfo.symbols.slice(0, 3).forEach((sym, idx) => {
+                classInfo.symbols.forEach((sym, idx) => {
                     allowedInstruments.push({
                         symbol: sym,
                         direction: cls.direction === 'LONG' ? 'LONG' : 'SHORT',
                         class: cls.name,
                         reason: `[LOW CONF] ${cls.name} - ${cls.drivers[0] || 'Low conviction'}`,
-                        score: 15 - idx
+                        score: 15 - (idx * 0.1)
                     });
                 });
                 continue;
@@ -933,8 +933,8 @@ export async function GET() {
                 }
             }
 
-            // Add top 5 instruments per class (expanded universe)
-            instrumentsToAdd.slice(0, 5).forEach(inst => {
+            // Add top performers first with highest scores
+            instrumentsToAdd.forEach(inst => {
                 allowedInstruments.push({
                     symbol: inst.symbol,
                     direction: cls.direction === 'LONG' ? 'LONG' : 'SHORT',
@@ -944,22 +944,19 @@ export async function GET() {
                 });
             });
             
-            // Also add more class symbols for broader coverage (up to 8 total per class)
-            if (instrumentsToAdd.length < 8) {
-                const existingSymbols = new Set(instrumentsToAdd.map(i => i.symbol));
-                classInfo.symbols.slice(0, 10).forEach(sym => {
-                    if (!existingSymbols.has(sym) && instrumentsToAdd.length < 8) {
-                        allowedInstruments.push({
-                            symbol: sym,
-                            direction: cls.direction === 'LONG' ? 'LONG' : 'SHORT',
-                            class: cls.name,
-                            reason: `${cls.name} regime-aligned opportunity`,
-                            score: convictionScore - 15
-                        });
-                        existingSymbols.add(sym);
-                    }
-                });
-            }
+            // Add ALL remaining class symbols for full coverage
+            const existingSymbols = new Set(instrumentsToAdd.map(i => i.symbol));
+            classInfo.symbols.forEach((sym, idx) => {
+                if (!existingSymbols.has(sym)) {
+                    allowedInstruments.push({
+                        symbol: sym,
+                        direction: cls.direction === 'LONG' ? 'LONG' : 'SHORT',
+                        class: cls.name,
+                        reason: `${cls.name} regime-aligned opportunity`,
+                        score: convictionScore - 10 - (idx * 0.1)
+                    });
+                }
+            });
         }
 
         // Sort by conviction score (no limit - include all allowed)
