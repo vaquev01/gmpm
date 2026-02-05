@@ -3141,8 +3141,6 @@ const executeSignal = useCallback((asset: ScoredAsset) => {
             {/* 2. MARKET CONTEXT (Real Evidence) */}
             <MarketContextPanel macro={macro} assets={assets} />
 
-            {/* 2.5. CURRENCY STRENGTH (Forex Analysis) */}
-            <CurrencyStrengthPanel assets={assets} macro={macro} />
 
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 h-[calc(100vh-240px)] min-h-[500px]">
 
@@ -3469,7 +3467,7 @@ const executeSignal = useCallback((asset: ScoredAsset) => {
 
                         <CardContent ref={scannerTableScrollRef} onScroll={onScannerTableScroll} className="p-0 flex-1 min-h-0 overflow-auto bg-gray-900">
                             <Table className="min-w-[1180px]">
-                                <TableHeader className="bg-gray-950 text-[11px] uppercase sticky top-0 z-10">
+                                <TableHeader className="bg-gray-950 text-[10px] uppercase sticky top-0 z-10">
                                     <TableRow className="hover:bg-transparent border-gray-800">
                                         <TableHead className="h-9 w-8 text-center text-gray-600">#</TableHead>
                                         <TableHead className="h-9 text-gray-400 font-bold w-56">Asset</TableHead>
@@ -3503,7 +3501,7 @@ const executeSignal = useCallback((asset: ScoredAsset) => {
                                         <TableHead className="h-9 text-gray-400 font-bold text-center w-10">Act</TableHead>
                                     </TableRow>
                                 </TableHeader>
-                                <TableBody className="text-[13px] font-mono">
+                                <TableBody className="text-xs font-mono">
                                     {loading ? (
                                         <TableRow>
                                             <TableCell colSpan={16} className="h-24 text-center text-gray-500">Connecting to global markets...</TableCell>

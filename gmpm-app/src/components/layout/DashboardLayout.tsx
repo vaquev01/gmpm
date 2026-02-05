@@ -32,6 +32,7 @@ export const DashboardLayout = ({ children }: DashboardLayoutProps) => {
                 { id: 'meso' as ViewType, label: 'MESO' },
                 { id: 'micro' as ViewType, label: 'MICRO' },
                 { id: 'liquidity' as ViewType, label: 'LIQUIDITY MAP' },
+                { id: 'currency' as ViewType, label: 'CURRENCY' },
             ]
         },
         {

@@ -9,6 +9,7 @@ import { MacroView } from '@/components/views/MacroView';
 import { MesoView } from '@/components/views/MesoView';
 import { MicroView } from '@/components/views/MicroView';
 import { LiquidityHeatmap } from '@/components/views/LiquidityHeatmap';
+import CurrencyStrengthView from '@/components/views/CurrencyStrengthView';
 import { AssetUniverseView } from '@/components/views/AssetUniverseView';
 import { useStore } from '@/store/useStore';
 
@@ -27,6 +28,8 @@ export default function Home() {
         return <MicroView />;
       case 'liquidity':
         return <LiquidityHeatmap />;
+      case 'currency':
+        return <CurrencyStrengthView />;
       case 'lab':
         return <LabView />;
       case 'factory':
