@@ -8,7 +8,7 @@ import { Progress } from '@/components/ui/progress';
 import {
     Droplets, TrendingUp, RefreshCw, AlertTriangle,
     ArrowUp, ArrowDown, Minus, Target, Layers, Clock,
-    AlertCircle, CheckCircle, Bitcoin, BarChart3
+    AlertCircle, CheckCircle, Bitcoin, BarChart3, Activity, Eye
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -177,80 +177,186 @@ function generateConclusion(data: LiquidityMapData): {
     };
 }
 
-// Actionable Insights Panel
+// Actionable Insights Panel - Enhanced Version
 const ActionableInsightsPanel = ({ assets }: { assets: LiquidityMapData[] }) => {
     const opportunities = assets
         .map(a => ({ asset: a, conclusion: generateConclusion(a) }))
-        .filter(x => x.conclusion.action !== 'NO_TRADE' && x.conclusion.confidence !== 'LOW')
+        .filter(x => x.conclusion.action !== 'NO_TRADE')
         .sort((a, b) => {
             const confOrder = { HIGH: 0, MEDIUM: 1, LOW: 2 };
             const actOrder = { WAIT_LONG: 0, WAIT_SHORT: 0, MONITOR: 1, NO_TRADE: 2 };
             return (confOrder[a.conclusion.confidence] - confOrder[b.conclusion.confidence]) ||
                    (actOrder[a.conclusion.action] - actOrder[b.conclusion.action]);
-        })
-        .slice(0, 8);
-
-    if (opportunities.length === 0) return null;
+        });
+    
+    const topPicks = opportunities.filter(x => x.conclusion.confidence === 'HIGH').slice(0, 3);
+    const watchlist = opportunities.filter(x => x.conclusion.confidence === 'MEDIUM').slice(0, 5);
+    
+    // Market overview
+    const seekingBuy = assets.filter(a => a.marketDirection === 'SEEKING_BUYSIDE').length;
+    const seekingSell = assets.filter(a => a.marketDirection === 'SEEKING_SELLSIDE').length;
+    const marketBias = seekingBuy > seekingSell ? 'BULLISH' : seekingSell > seekingBuy ? 'BEARISH' : 'NEUTRAL';
 
     return (
-        <Card className="bg-gradient-to-r from-gray-900 via-purple-900/20 to-gray-900 border-purple-500/30">
-            <CardHeader className="py-3 px-4 border-b border-purple-500/20">
-                <CardTitle className="text-sm font-bold text-purple-300 uppercase flex items-center gap-2">
-                    <Target className="w-4 h-4" />
-                    🎯 CONCLUSÕES & AÇÕES - O Que Fazer Agora
-                </CardTitle>
-            </CardHeader>
-            <CardContent className="p-4">
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
-                    {opportunities.map(({ asset, conclusion }) => (
-                        <div key={asset.symbol} className={cn(
-                            "rounded-lg p-3 border",
-                            conclusion.action === 'WAIT_LONG' ? "bg-green-950/30 border-green-500/30" :
-                            conclusion.action === 'WAIT_SHORT' ? "bg-red-950/30 border-red-500/30" :
-                            "bg-gray-900/50 border-gray-700"
-                        )}>
-                            <div className="flex items-center justify-between mb-2">
-                                <span className="font-bold text-white">{asset.displaySymbol}</span>
-                                <Badge className={cn(
-                                    "text-[9px]",
-                                    conclusion.action === 'WAIT_LONG' ? "bg-green-500/20 text-green-400" :
-                                    conclusion.action === 'WAIT_SHORT' ? "bg-red-500/20 text-red-400" :
-                                    "bg-yellow-500/20 text-yellow-400"
-                                )}>
-                                    {conclusion.action === 'WAIT_LONG' ? '⏳ ESPERAR LONG' :
-                                     conclusion.action === 'WAIT_SHORT' ? '⏳ ESPERAR SHORT' :
-                                     '👀 MONITORAR'}
-                                </Badge>
+        <div className="space-y-4">
+            {/* Market Conclusion */}
+            <Card className={cn(
+                "border-2",
+                marketBias === 'BULLISH' ? "bg-green-950/20 border-green-500/40" :
+                marketBias === 'BEARISH' ? "bg-red-950/20 border-red-500/40" :
+                "bg-gray-900/50 border-gray-700"
+            )}>
+                <CardHeader className="py-3 px-4">
+                    <CardTitle className="text-sm font-bold uppercase flex items-center gap-2">
+                        <Activity className="w-4 h-4" />
+                        📊 CONCLUSÃO GERAL DO MERCADO
+                    </CardTitle>
+                </CardHeader>
+                <CardContent className="p-4 pt-0">
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div className="space-y-2">
+                            <div className="text-[10px] text-gray-500 uppercase">Viés Predominante</div>
+                            <div className={cn(
+                                "text-xl font-bold",
+                                marketBias === 'BULLISH' ? "text-green-400" :
+                                marketBias === 'BEARISH' ? "text-red-400" : "text-gray-400"
+                            )}>
+                                {marketBias === 'BULLISH' ? '🟢 COMPRADORES BUSCANDO LIQUIDEZ' :
+                                 marketBias === 'BEARISH' ? '🔴 VENDEDORES BUSCANDO LIQUIDEZ' :
+                                 '⚪ MERCADO EQUILIBRADO'}
                             </div>
-                            <div className="text-[10px] text-gray-300 mb-2">{conclusion.summary}</div>
-                            <div className="space-y-1 text-[9px]">
-                                <div className="flex justify-between">
-                                    <span className="text-gray-500">Confiança:</span>
-                                    <span className={cn(
-                                        conclusion.confidence === 'HIGH' ? "text-green-400" :
-                                        conclusion.confidence === 'MEDIUM' ? "text-yellow-400" : "text-gray-400"
-                                    )}>{conclusion.confidence}</span>
-                                </div>
-                                <div className="flex justify-between">
-                                    <span className="text-gray-500">Target:</span>
-                                    <span className="text-cyan-400 font-mono">{conclusion.target}</span>
-                                </div>
-                                <div className="flex justify-between">
-                                    <span className="text-gray-500">Timing:</span>
-                                    <span className="text-purple-400">{conclusion.timing}</span>
-                                </div>
+                            <div className="text-[11px] text-gray-400">
+                                {seekingBuy} ativos buscando liquidez acima | {seekingSell} abaixo
                             </div>
                         </div>
-                    ))}
-                </div>
-                <div className="mt-3 p-2 bg-gray-950/50 rounded border border-gray-800">
-                    <div className="text-[10px] text-gray-400 text-center">
-                        💡 <span className="text-yellow-400">ESPERAR LONG/SHORT</span> = Aguardar sweep da liquidez e entrada após confirmação | 
-                        <span className="text-cyan-400"> MONITORAR</span> = Acompanhar aproximação do preço
+                        <div className="space-y-2">
+                            <div className="text-[10px] text-gray-500 uppercase">O Que Isso Significa</div>
+                            <div className="text-[11px] text-gray-300">
+                                {marketBias === 'BULLISH' ? 
+                                    '• Institucionais posicionados para alta\n• Esperar sweeps de liquidez ACIMA para entrar SHORT\n• Ou aguardar confirmação de reversão para LONG' :
+                                 marketBias === 'BEARISH' ? 
+                                    '• Institucionais posicionados para baixa\n• Esperar sweeps de liquidez ABAIXO para entrar LONG\n• Ou aguardar confirmação de reversão para SHORT' :
+                                    '• Mercado sem direção clara\n• Aguardar definição de bias\n• Operar apenas níveis muito claros'}
+                            </div>
+                        </div>
+                        <div className="space-y-2">
+                            <div className="text-[10px] text-gray-500 uppercase">Recomendação</div>
+                            <div className={cn(
+                                "p-2 rounded border text-[11px] font-medium",
+                                marketBias === 'BULLISH' ? "bg-green-500/10 border-green-500/30 text-green-300" :
+                                marketBias === 'BEARISH' ? "bg-red-500/10 border-red-500/30 text-red-300" :
+                                "bg-yellow-500/10 border-yellow-500/30 text-yellow-300"
+                            )}>
+                                {marketBias === 'BULLISH' ? 
+                                    '✓ Priorizar operações de COMPRA após sweeps' :
+                                 marketBias === 'BEARISH' ? 
+                                    '✓ Priorizar operações de VENDA após sweeps' :
+                                    '⚠️ Reduzir exposição e aguardar clareza'}
+                            </div>
+                        </div>
                     </div>
+                </CardContent>
+            </Card>
+
+            {/* Top Picks */}
+            {topPicks.length > 0 && (
+                <Card className="bg-gradient-to-r from-green-950/30 via-gray-900 to-green-950/30 border-green-500/40">
+                    <CardHeader className="py-3 px-4 border-b border-green-500/20">
+                        <CardTitle className="text-sm font-bold text-green-300 uppercase flex items-center gap-2">
+                            <Target className="w-4 h-4" />
+                            🎯 TOP OPORTUNIDADES (Alta Confiança)
+                        </CardTitle>
+                    </CardHeader>
+                    <CardContent className="p-4">
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                            {topPicks.map(({ asset, conclusion }, idx) => (
+                                <div key={asset.symbol} className="bg-gray-900/80 rounded-lg p-4 border border-green-500/20">
+                                    <div className="flex items-center justify-between mb-3">
+                                        <div className="flex items-center gap-2">
+                                            <span className="text-lg font-bold text-white">#{idx + 1}</span>
+                                            <span className="font-bold text-green-400">{asset.displaySymbol}</span>
+                                        </div>
+                                        <Badge className={cn(
+                                            "text-[10px]",
+                                            conclusion.action === 'WAIT_LONG' ? "bg-green-500/30 text-green-300" :
+                                            "bg-red-500/30 text-red-300"
+                                        )}>
+                                            {conclusion.action === 'WAIT_LONG' ? '📈 LONG' : '📉 SHORT'}
+                                        </Badge>
+                                    </div>
+                                    
+                                    <div className="space-y-2 text-[11px]">
+                                        <div className="p-2 bg-gray-950/50 rounded">
+                                            <div className="text-gray-400 mb-1">📋 Plano de Ação:</div>
+                                            <div className="text-gray-200">{conclusion.summary}</div>
+                                        </div>
+                                        
+                                        <div className="grid grid-cols-2 gap-2">
+                                            <div>
+                                                <span className="text-gray-500">🎯 Target:</span>
+                                                <div className="text-cyan-400 font-mono font-bold">{conclusion.target}</div>
+                                            </div>
+                                            <div>
+                                                <span className="text-gray-500">⏰ Timing:</span>
+                                                <div className="text-purple-400">{conclusion.timing}</div>
+                                            </div>
+                                        </div>
+                                        
+                                        <div className="pt-2 border-t border-gray-800">
+                                            <span className="text-gray-500">🚫 Invalidação:</span>
+                                            <div className="text-red-400 font-mono text-[10px]">{conclusion.invalidation}</div>
+                                        </div>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </CardContent>
+                </Card>
+            )}
+
+            {/* Watchlist */}
+            {watchlist.length > 0 && (
+                <Card className="bg-gray-900/50 border-yellow-500/30">
+                    <CardHeader className="py-3 px-4 border-b border-yellow-500/20">
+                        <CardTitle className="text-sm font-bold text-yellow-300 uppercase flex items-center gap-2">
+                            <Eye className="w-4 h-4" />
+                            👀 WATCHLIST (Monitorar)
+                        </CardTitle>
+                    </CardHeader>
+                    <CardContent className="p-4">
+                        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+                            {watchlist.map(({ asset, conclusion }) => (
+                                <div key={asset.symbol} className="bg-gray-900/80 rounded p-3 border border-gray-700">
+                                    <div className="flex items-center justify-between mb-2">
+                                        <span className="font-bold text-white text-sm">{asset.displaySymbol}</span>
+                                        <Badge variant="outline" className="text-[8px] border-yellow-500/50 text-yellow-400">
+                                            {conclusion.action === 'WAIT_LONG' ? 'LONG' : 
+                                             conclusion.action === 'WAIT_SHORT' ? 'SHORT' : 'WATCH'}
+                                        </Badge>
+                                    </div>
+                                    <div className="text-[10px] text-gray-400">{conclusion.summary.slice(0, 60)}...</div>
+                                    <div className="mt-2 text-[9px]">
+                                        <span className="text-gray-500">Target: </span>
+                                        <span className="text-cyan-400 font-mono">{conclusion.target}</span>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </CardContent>
+                </Card>
+            )}
+
+            {/* Legend */}
+            <div className="p-3 bg-gray-950/50 rounded-lg border border-gray-800">
+                <div className="text-[10px] text-gray-400 text-center space-x-4">
+                    <span>💡 <strong className="text-green-400">LONG</strong> = Esperar sweep + reversão para compra</span>
+                    <span>|</span>
+                    <span><strong className="text-red-400">SHORT</strong> = Esperar sweep + reversão para venda</span>
+                    <span>|</span>
+                    <span><strong className="text-yellow-400">WATCH</strong> = Aguardar aproximação do preço</span>
                 </div>
-            </CardContent>
-        </Card>
+            </div>
+        </div>
     );
 };
 

@@ -119,6 +119,170 @@ export default function CurrencyStrengthView() {
                 </Card>
             )}
 
+            {/* CONCLUSÕES E RECOMENDAÇÕES */}
+            {data && (
+                <Card className={cn(
+                    "border-2",
+                    data.globalFlow.riskSentiment === 'RISK_ON' ? "bg-green-950/20 border-green-500/40" :
+                    data.globalFlow.riskSentiment === 'RISK_OFF' ? "bg-red-950/20 border-red-500/40" :
+                    "bg-gray-900/50 border-gray-700"
+                )}>
+                    <CardHeader className="py-3 px-4 border-b border-gray-700">
+                        <CardTitle className="text-sm font-bold uppercase flex items-center gap-2">
+                            <Target className="w-4 h-4" />
+                            🎯 CONCLUSÃO & RECOMENDAÇÕES - O Que Fazer Agora
+                        </CardTitle>
+                    </CardHeader>
+                    <CardContent className="p-4">
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+                            {/* Market Conclusion */}
+                            <div className="space-y-2">
+                                <div className="text-[10px] text-gray-500 uppercase">Conclusão do Mercado</div>
+                                <div className={cn(
+                                    "text-lg font-bold",
+                                    data.globalFlow.riskSentiment === 'RISK_ON' ? "text-green-400" :
+                                    data.globalFlow.riskSentiment === 'RISK_OFF' ? "text-red-400" : "text-gray-400"
+                                )}>
+                                    {data.globalFlow.riskSentiment === 'RISK_ON' ? '🟢 APETITE POR RISCO' :
+                                     data.globalFlow.riskSentiment === 'RISK_OFF' ? '🔴 AVERSÃO AO RISCO' :
+                                     '⚪ MERCADO NEUTRO'}
+                                </div>
+                                <div className="text-[11px] text-gray-400">
+                                    {data.globalFlow.riskSentiment === 'RISK_ON' ? 
+                                        'Institucionais buscando retorno. Moedas de risco (AUD, NZD, CAD) em vantagem.' :
+                                     data.globalFlow.riskSentiment === 'RISK_OFF' ? 
+                                        'Fuga para segurança. Safe havens (USD, JPY, CHF) em vantagem.' :
+                                        'Sem direção clara. Aguardar definição de fluxo.'}
+                                </div>
+                            </div>
+
+                            {/* Main Recommendation */}
+                            <div className="space-y-2">
+                                <div className="text-[10px] text-gray-500 uppercase">Estratégia Principal</div>
+                                <div className={cn(
+                                    "p-3 rounded-lg border",
+                                    "bg-gradient-to-r from-green-950/30 to-red-950/30 border-purple-500/30"
+                                )}>
+                                    <div className="text-center">
+                                        <div className="flex items-center justify-center gap-2 mb-2">
+                                            <span className="text-lg">{data.currencies.find(c => c.code === data.globalFlow.dominantFlow)?.flag}</span>
+                                            <span className="text-white font-bold">COMPRAR {data.globalFlow.dominantFlow}</span>
+                                            <span className="text-gray-500">/</span>
+                                            <span className="text-white font-bold">VENDER {data.globalFlow.weakestCurrency}</span>
+                                            <span className="text-lg">{data.currencies.find(c => c.code === data.globalFlow.weakestCurrency)?.flag}</span>
+                                        </div>
+                                        <div className="text-[11px] text-purple-400">
+                                            Par ideal: {data.globalFlow.dominantFlow}{data.globalFlow.weakestCurrency} → LONG
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Risk Level */}
+                            <div className="space-y-2">
+                                <div className="text-[10px] text-gray-500 uppercase">Nível de Confiança</div>
+                                <div className="space-y-2">
+                                    {(() => {
+                                        const strongest = data.currencies[0];
+                                        const weakest = data.currencies[data.currencies.length - 1];
+                                        const diff = strongest.strength - weakest.strength;
+                                        const conf = diff >= 30 ? 'HIGH' : diff >= 15 ? 'MEDIUM' : 'LOW';
+                                        return (
+                                            <>
+                                                <div className={cn(
+                                                    "text-lg font-bold",
+                                                    conf === 'HIGH' ? "text-green-400" :
+                                                    conf === 'MEDIUM' ? "text-yellow-400" : "text-gray-400"
+                                                )}>
+                                                    {conf === 'HIGH' ? '✅ ALTA CONFIANÇA' :
+                                                     conf === 'MEDIUM' ? '⚠️ MÉDIA CONFIANÇA' :
+                                                     '❌ BAIXA CONFIANÇA'}
+                                                </div>
+                                                <div className="text-[11px] text-gray-400">
+                                                    Diferencial de força: {diff} pontos
+                                                </div>
+                                                <div className="text-[10px] text-gray-500">
+                                                    {conf === 'HIGH' ? 'Divergência forte. Bom momento para operar.' :
+                                                     conf === 'MEDIUM' ? 'Divergência moderada. Operar com cautela.' :
+                                                     'Divergência fraca. Melhor aguardar.'}
+                                                </div>
+                                            </>
+                                        );
+                                    })()}
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Top 3 Pairs to Trade */}
+                        {data.bestPairs && data.bestPairs.length > 0 && (
+                            <div className="border-t border-gray-800 pt-4">
+                                <div className="text-[10px] text-gray-500 uppercase mb-3">🏆 TOP 3 PARES PARA OPERAR AGORA</div>
+                                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                                    {data.bestPairs.slice(0, 3).map((pair, idx) => {
+                                        const baseCurr = data.currencies.find(c => c.code === pair.base);
+                                        const quoteCurr = data.currencies.find(c => c.code === pair.quote);
+                                        return (
+                                            <div key={pair.symbol} className={cn(
+                                                "rounded-lg p-3 border",
+                                                pair.direction === 'LONG' ? "bg-green-950/20 border-green-500/30" : "bg-red-950/20 border-red-500/30"
+                                            )}>
+                                                <div className="flex items-center justify-between mb-2">
+                                                    <div className="flex items-center gap-2">
+                                                        <span className="text-lg font-bold text-white">#{idx + 1}</span>
+                                                        <span className="font-bold text-white">{pair.symbol.replace('=X', '')}</span>
+                                                    </div>
+                                                    <span className={cn(
+                                                        "text-xs font-bold px-2 py-1 rounded",
+                                                        pair.direction === 'LONG' ? "bg-green-500/30 text-green-300" : "bg-red-500/30 text-red-300"
+                                                    )}>
+                                                        {pair.direction === 'LONG' ? '📈 COMPRAR' : '📉 VENDER'}
+                                                    </span>
+                                                </div>
+                                                <div className="space-y-1 text-[10px]">
+                                                    <div className="flex justify-between">
+                                                        <span className="text-gray-500">Força Base ({pair.base}):</span>
+                                                        <span className="text-green-400 font-mono">{pair.baseStrength}</span>
+                                                    </div>
+                                                    <div className="flex justify-between">
+                                                        <span className="text-gray-500">Força Quote ({pair.quote}):</span>
+                                                        <span className="text-red-400 font-mono">{pair.quoteStrength}</span>
+                                                    </div>
+                                                    <div className="flex justify-between">
+                                                        <span className="text-gray-500">Diferencial:</span>
+                                                        <span className="text-purple-400 font-bold">Δ{pair.differential}</span>
+                                                    </div>
+                                                    <div className="flex justify-between">
+                                                        <span className="text-gray-500">Confiança:</span>
+                                                        <span className={cn(
+                                                            pair.confidence === 'HIGH' ? "text-green-400" :
+                                                            pair.confidence === 'MEDIUM' ? "text-yellow-400" : "text-gray-400"
+                                                        )}>{pair.confidence}</span>
+                                                    </div>
+                                                </div>
+                                                <div className="mt-2 pt-2 border-t border-gray-800 text-[9px] text-gray-500">
+                                                    💡 {pair.direction === 'LONG' ? 
+                                                        `${baseCurr?.economicIndicators.sentiment === 'HAWKISH' ? 'BC Hawkish favorece' : 'Momentum positivo'}` :
+                                                        `${quoteCurr?.economicIndicators.sentiment === 'DOVISH' ? 'BC Dovish favorece' : 'Momentum negativo'}`}
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Legend */}
+                        <div className="mt-4 p-2 bg-gray-950/50 rounded border border-gray-800">
+                            <div className="text-[9px] text-gray-500 text-center">
+                                💡 <strong className="text-green-400">RISK ON</strong> = Comprar moedas de risco (AUD, NZD, CAD) | 
+                                <strong className="text-red-400"> RISK OFF</strong> = Comprar safe havens (USD, JPY, CHF) | 
+                                <strong className="text-purple-400"> Δ Diferencial</strong> = Quanto maior, melhor a oportunidade
+                            </div>
+                        </div>
+                    </CardContent>
+                </Card>
+            )}
+
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
                 {/* Strength Meter */}
                 <div className={cn("space-y-4", selectedCurrency ? "lg:col-span-4" : "lg:col-span-6")}>
