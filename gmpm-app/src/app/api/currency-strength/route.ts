@@ -414,8 +414,8 @@ export async function GET() {
         const marketData = await marketRes.json().catch(() => ({ success: false }));
         const macroData = await macroRes.json().catch(() => ({}));
 
-        const assets = marketData.success && Array.isArray(marketData.snapshot?.assets) 
-            ? marketData.snapshot.assets 
+        const assets = marketData.success && Array.isArray(marketData.assets) 
+            ? marketData.assets 
             : [];
 
         // Filter forex pairs
