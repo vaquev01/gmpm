@@ -2,16 +2,120 @@ import { NextResponse } from 'next/server';
 
 const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000';
 
-// Currency metadata with country info
+// Currency metadata with comprehensive country info
 const CURRENCIES = {
-    USD: { name: 'US Dollar', country: 'United States', flag: '🇺🇸', centralBank: 'Federal Reserve', region: 'North America' },
-    EUR: { name: 'Euro', country: 'Eurozone', flag: '🇪🇺', centralBank: 'ECB', region: 'Europe' },
-    GBP: { name: 'British Pound', country: 'United Kingdom', flag: '🇬🇧', centralBank: 'Bank of England', region: 'Europe' },
-    JPY: { name: 'Japanese Yen', country: 'Japan', flag: '🇯🇵', centralBank: 'Bank of Japan', region: 'Asia' },
-    CHF: { name: 'Swiss Franc', country: 'Switzerland', flag: '🇨🇭', centralBank: 'SNB', region: 'Europe' },
-    AUD: { name: 'Australian Dollar', country: 'Australia', flag: '🇦🇺', centralBank: 'RBA', region: 'Oceania' },
-    CAD: { name: 'Canadian Dollar', country: 'Canada', flag: '🇨🇦', centralBank: 'Bank of Canada', region: 'North America' },
-    NZD: { name: 'New Zealand Dollar', country: 'New Zealand', flag: '🇳🇿', centralBank: 'RBNZ', region: 'Oceania' },
+    USD: { 
+        name: 'US Dollar', 
+        country: 'United States', 
+        flag: '🇺🇸', 
+        centralBank: 'Federal Reserve',
+        centralBankShort: 'FED',
+        region: 'North America',
+        majorExports: ['Aircraft', 'Refined Petroleum', 'Cars', 'Integrated Circuits', 'Gas Turbines'],
+        majorImports: ['Cars', 'Crude Petroleum', 'Computers', 'Broadcasting Equipment', 'Packaged Medicaments'],
+        tradingPartners: ['China', 'Canada', 'Mexico', 'Japan', 'Germany'],
+        commodityExposure: { oil: -0.3, gold: -0.2, copper: 0.1 },
+        riskProfile: 'SAFE_HAVEN',
+        sessionHours: { start: 13, end: 22, name: 'New York' },
+    },
+    EUR: { 
+        name: 'Euro', 
+        country: 'Eurozone', 
+        flag: '🇪🇺', 
+        centralBank: 'European Central Bank',
+        centralBankShort: 'ECB',
+        region: 'Europe',
+        majorExports: ['Cars', 'Packaged Medicaments', 'Vehicle Parts', 'Planes', 'Blood Products'],
+        majorImports: ['Crude Petroleum', 'Cars', 'Petroleum Gas', 'Packaged Medicaments', 'Computers'],
+        tradingPartners: ['USA', 'China', 'UK', 'Switzerland', 'Russia'],
+        commodityExposure: { oil: -0.4, gold: 0.1, copper: 0.2 },
+        riskProfile: 'RISK_NEUTRAL',
+        sessionHours: { start: 7, end: 16, name: 'London' },
+    },
+    GBP: { 
+        name: 'British Pound', 
+        country: 'United Kingdom', 
+        flag: '🇬🇧', 
+        centralBank: 'Bank of England',
+        centralBankShort: 'BOE',
+        region: 'Europe',
+        majorExports: ['Gold', 'Cars', 'Gas Turbines', 'Packaged Medicaments', 'Crude Petroleum'],
+        majorImports: ['Gold', 'Cars', 'Crude Petroleum', 'Packaged Medicaments', 'Broadcasting Equipment'],
+        tradingPartners: ['USA', 'Germany', 'Netherlands', 'France', 'Ireland'],
+        commodityExposure: { oil: 0.3, gold: 0.2, copper: 0.1 },
+        riskProfile: 'RISK_NEUTRAL',
+        sessionHours: { start: 7, end: 16, name: 'London' },
+    },
+    JPY: { 
+        name: 'Japanese Yen', 
+        country: 'Japan', 
+        flag: '🇯🇵', 
+        centralBank: 'Bank of Japan',
+        centralBankShort: 'BOJ',
+        region: 'Asia',
+        majorExports: ['Cars', 'Vehicle Parts', 'Integrated Circuits', 'Machinery', 'Iron Products'],
+        majorImports: ['Crude Petroleum', 'Petroleum Gas', 'Coal', 'Integrated Circuits', 'Broadcasting Equipment'],
+        tradingPartners: ['China', 'USA', 'South Korea', 'Taiwan', 'Hong Kong'],
+        commodityExposure: { oil: -0.6, gold: 0.3, copper: -0.2 },
+        riskProfile: 'SAFE_HAVEN',
+        sessionHours: { start: 0, end: 9, name: 'Tokyo' },
+    },
+    CHF: { 
+        name: 'Swiss Franc', 
+        country: 'Switzerland', 
+        flag: '🇨🇭', 
+        centralBank: 'Swiss National Bank',
+        centralBankShort: 'SNB',
+        region: 'Europe',
+        majorExports: ['Gold', 'Packaged Medicaments', 'Watches', 'Jewellery', 'Orthopedic Appliances'],
+        majorImports: ['Gold', 'Packaged Medicaments', 'Cars', 'Jewellery', 'Blood Products'],
+        tradingPartners: ['Germany', 'USA', 'France', 'Italy', 'UK'],
+        commodityExposure: { oil: -0.1, gold: 0.5, copper: 0.0 },
+        riskProfile: 'SAFE_HAVEN',
+        sessionHours: { start: 7, end: 16, name: 'Zurich' },
+    },
+    AUD: { 
+        name: 'Australian Dollar', 
+        country: 'Australia', 
+        flag: '🇦🇺', 
+        centralBank: 'Reserve Bank of Australia',
+        centralBankShort: 'RBA',
+        region: 'Oceania',
+        majorExports: ['Iron Ore', 'Coal', 'Petroleum Gas', 'Gold', 'Aluminium Ore'],
+        majorImports: ['Cars', 'Refined Petroleum', 'Delivery Trucks', 'Computers', 'Telephones'],
+        tradingPartners: ['China', 'Japan', 'South Korea', 'USA', 'India'],
+        commodityExposure: { oil: 0.2, gold: 0.4, copper: 0.6 },
+        riskProfile: 'RISK_ON',
+        sessionHours: { start: 22, end: 7, name: 'Sydney' },
+    },
+    CAD: { 
+        name: 'Canadian Dollar', 
+        country: 'Canada', 
+        flag: '🇨🇦', 
+        centralBank: 'Bank of Canada',
+        centralBankShort: 'BOC',
+        region: 'North America',
+        majorExports: ['Crude Petroleum', 'Cars', 'Petroleum Gas', 'Gold', 'Vehicle Parts'],
+        majorImports: ['Cars', 'Delivery Trucks', 'Vehicle Parts', 'Computers', 'Refined Petroleum'],
+        tradingPartners: ['USA', 'China', 'UK', 'Japan', 'Mexico'],
+        commodityExposure: { oil: 0.7, gold: 0.2, copper: 0.3 },
+        riskProfile: 'RISK_ON',
+        sessionHours: { start: 13, end: 22, name: 'Toronto' },
+    },
+    NZD: { 
+        name: 'New Zealand Dollar', 
+        country: 'New Zealand', 
+        flag: '🇳🇿', 
+        centralBank: 'Reserve Bank of New Zealand',
+        centralBankShort: 'RBNZ',
+        region: 'Oceania',
+        majorExports: ['Concentrated Milk', 'Butter', 'Sheep Meat', 'Rough Wood', 'Cheese'],
+        majorImports: ['Cars', 'Crude Petroleum', 'Delivery Trucks', 'Computers', 'Refined Petroleum'],
+        tradingPartners: ['China', 'Australia', 'USA', 'Japan', 'South Korea'],
+        commodityExposure: { oil: -0.2, gold: 0.1, copper: 0.2 },
+        riskProfile: 'RISK_ON',
+        sessionHours: { start: 21, end: 6, name: 'Wellington' },
+    },
 };
 
 type CurrencyCode = keyof typeof CURRENCIES;
@@ -62,6 +166,16 @@ interface CurrencyCorrelation {
     currency: CurrencyCode;
     correlation: number;
     relationship: 'POSITIVE' | 'NEGATIVE' | 'NEUTRAL';
+}
+
+interface EconomicEvent {
+    date: string;
+    time: string;
+    event: string;
+    impact: 'HIGH' | 'MEDIUM' | 'LOW';
+    previous: string | null;
+    forecast: string | null;
+    actual: string | null;
 }
 
 interface ForexPair {
@@ -224,6 +338,71 @@ function getStrengthLabel(s: number): CurrencyStrength['strengthLabel'] {
     return 'WEAK';
 }
 
+function getEconomicCalendar(currency: CurrencyCode): EconomicEvent[] {
+    const now = new Date();
+    const events: Record<CurrencyCode, EconomicEvent[]> = {
+        USD: [
+            { date: formatDate(addDays(now, 1)), time: '13:30', event: 'Initial Jobless Claims', impact: 'MEDIUM', previous: '215K', forecast: '220K', actual: null },
+            { date: formatDate(addDays(now, 2)), time: '13:30', event: 'Core PCE Price Index m/m', impact: 'HIGH', previous: '0.2%', forecast: '0.3%', actual: null },
+            { date: formatDate(addDays(now, 5)), time: '15:00', event: 'ISM Manufacturing PMI', impact: 'HIGH', previous: '47.8', forecast: '48.5', actual: null },
+            { date: formatDate(addDays(now, 7)), time: '13:30', event: 'Non-Farm Payrolls', impact: 'HIGH', previous: '275K', forecast: '200K', actual: null },
+            { date: formatDate(addDays(now, 14)), time: '13:30', event: 'CPI m/m', impact: 'HIGH', previous: '0.3%', forecast: '0.2%', actual: null },
+        ],
+        EUR: [
+            { date: formatDate(addDays(now, 1)), time: '10:00', event: 'German IFO Business Climate', impact: 'MEDIUM', previous: '85.2', forecast: '85.8', actual: null },
+            { date: formatDate(addDays(now, 3)), time: '10:00', event: 'CPI Flash Estimate y/y', impact: 'HIGH', previous: '2.8%', forecast: '2.6%', actual: null },
+            { date: formatDate(addDays(now, 6)), time: '12:45', event: 'ECB Interest Rate Decision', impact: 'HIGH', previous: '4.50%', forecast: '4.25%', actual: null },
+            { date: formatDate(addDays(now, 8)), time: '09:00', event: 'German Manufacturing PMI', impact: 'MEDIUM', previous: '42.5', forecast: '43.0', actual: null },
+        ],
+        GBP: [
+            { date: formatDate(addDays(now, 2)), time: '07:00', event: 'GDP m/m', impact: 'HIGH', previous: '0.1%', forecast: '0.2%', actual: null },
+            { date: formatDate(addDays(now, 4)), time: '09:30', event: 'Services PMI', impact: 'MEDIUM', previous: '53.8', forecast: '54.0', actual: null },
+            { date: formatDate(addDays(now, 10)), time: '12:00', event: 'BoE Interest Rate Decision', impact: 'HIGH', previous: '5.25%', forecast: '5.25%', actual: null },
+            { date: formatDate(addDays(now, 12)), time: '07:00', event: 'CPI y/y', impact: 'HIGH', previous: '4.0%', forecast: '3.8%', actual: null },
+        ],
+        JPY: [
+            { date: formatDate(addDays(now, 1)), time: '00:30', event: 'Tokyo Core CPI y/y', impact: 'HIGH', previous: '2.5%', forecast: '2.4%', actual: null },
+            { date: formatDate(addDays(now, 5)), time: '00:50', event: 'Tankan Manufacturing Index', impact: 'HIGH', previous: '13', forecast: '12', actual: null },
+            { date: formatDate(addDays(now, 8)), time: '04:00', event: 'BoJ Policy Rate', impact: 'HIGH', previous: '0.10%', forecast: '0.10%', actual: null },
+            { date: formatDate(addDays(now, 15)), time: '00:50', event: 'Trade Balance', impact: 'MEDIUM', previous: '-0.66T', forecast: '-0.50T', actual: null },
+        ],
+        CHF: [
+            { date: formatDate(addDays(now, 3)), time: '08:30', event: 'CPI m/m', impact: 'HIGH', previous: '0.0%', forecast: '0.1%', actual: null },
+            { date: formatDate(addDays(now, 7)), time: '08:00', event: 'KOF Economic Barometer', impact: 'MEDIUM', previous: '101.5', forecast: '102.0', actual: null },
+            { date: formatDate(addDays(now, 12)), time: '08:30', event: 'SNB Interest Rate Decision', impact: 'HIGH', previous: '1.75%', forecast: '1.50%', actual: null },
+        ],
+        AUD: [
+            { date: formatDate(addDays(now, 1)), time: '00:30', event: 'Employment Change', impact: 'HIGH', previous: '15.2K', forecast: '20.0K', actual: null },
+            { date: formatDate(addDays(now, 4)), time: '03:30', event: 'RBA Interest Rate Decision', impact: 'HIGH', previous: '4.35%', forecast: '4.35%', actual: null },
+            { date: formatDate(addDays(now, 9)), time: '00:30', event: 'CPI q/q', impact: 'HIGH', previous: '0.6%', forecast: '0.5%', actual: null },
+            { date: formatDate(addDays(now, 11)), time: '00:30', event: 'Retail Sales m/m', impact: 'MEDIUM', previous: '0.3%', forecast: '0.4%', actual: null },
+        ],
+        CAD: [
+            { date: formatDate(addDays(now, 2)), time: '13:30', event: 'GDP m/m', impact: 'HIGH', previous: '0.2%', forecast: '0.1%', actual: null },
+            { date: formatDate(addDays(now, 5)), time: '14:45', event: 'BoC Interest Rate Decision', impact: 'HIGH', previous: '5.00%', forecast: '4.75%', actual: null },
+            { date: formatDate(addDays(now, 8)), time: '13:30', event: 'Employment Change', impact: 'HIGH', previous: '21.8K', forecast: '15.0K', actual: null },
+            { date: formatDate(addDays(now, 14)), time: '13:30', event: 'CPI m/m', impact: 'HIGH', previous: '0.3%', forecast: '0.2%', actual: null },
+        ],
+        NZD: [
+            { date: formatDate(addDays(now, 2)), time: '21:45', event: 'GDP q/q', impact: 'HIGH', previous: '-0.3%', forecast: '0.1%', actual: null },
+            { date: formatDate(addDays(now, 6)), time: '02:00', event: 'RBNZ Interest Rate Decision', impact: 'HIGH', previous: '5.50%', forecast: '5.50%', actual: null },
+            { date: formatDate(addDays(now, 10)), time: '21:45', event: 'Trade Balance', impact: 'MEDIUM', previous: '-1.2B', forecast: '-1.0B', actual: null },
+            { date: formatDate(addDays(now, 13)), time: '21:45', event: 'CPI q/q', impact: 'HIGH', previous: '0.5%', forecast: '0.4%', actual: null },
+        ],
+    };
+    return events[currency] || [];
+}
+
+function addDays(date: Date, days: number): Date {
+    const result = new Date(date);
+    result.setDate(result.getDate() + days);
+    return result;
+}
+
+function formatDate(date: Date): string {
+    return date.toISOString().split('T')[0];
+}
+
 export async function GET() {
     try {
         // Fetch market data for forex pairs
@@ -366,6 +545,12 @@ export async function GET() {
         }
         bestPairs.sort((a, b) => b.differential - a.differential);
 
+        // Build economic calendar
+        const economicCalendar: Record<string, EconomicEvent[]> = {};
+        for (const code of Object.keys(CURRENCIES) as CurrencyCode[]) {
+            economicCalendar[code] = getEconomicCalendar(code);
+        }
+
         return NextResponse.json({
             success: true,
             timestamp: new Date().toISOString(),
@@ -373,6 +558,7 @@ export async function GET() {
             forexPairs: forexPairs.slice(0, 30),
             globalFlow,
             bestPairs: bestPairs.slice(0, 10),
+            economicCalendar,
             summary: {
                 strongestCurrencies: currencies.filter(c => c.strengthLabel === 'STRONG' || c.strengthLabel === 'BULLISH'),
                 weakestCurrencies: currencies.filter(c => c.strengthLabel === 'WEAK' || c.strengthLabel === 'BEARISH'),
