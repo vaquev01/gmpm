@@ -1278,8 +1278,22 @@ const RegimePanel = ({ regime, loading }: { regime: RegimeSnapshot | null; loadi
 
 // --- EXECUTION STATUS PANEL (Micro-Capital Framework) ---
 const ExecutionStatusPanel = () => {
+    const [mounted, setMounted] = useState(false);
+    const [timeStr, setTimeStr] = useState('--:-- UTC');
+    
+    useEffect(() => {
+        setMounted(true);
+        const update = () => {
+            const now = new Date();
+            setTimeStr(`${now.toUTCString().slice(17, 22)} UTC`);
+        };
+        update();
+        const interval = setInterval(update, 30000);
+        return () => clearInterval(interval);
+    }, []);
+
     const now = new Date();
-    const utcHour = now.getUTCHours();
+    const utcHour = mounted ? now.getUTCHours() : 12; // Default to noon for SSR
 
     // Trading sessions (UTC)
     const sessions = {
@@ -1296,7 +1310,7 @@ const ExecutionStatusPanel = () => {
     // Best trading windows
     const isLondonNYOverlap = utcHour >= 13 && utcHour < 16;
     const isRollover = utcHour >= 21 && utcHour <= 23;
-    const isWeekendClose = now.getUTCDay() === 5 && utcHour >= 19;
+    const isWeekendClose = mounted && now.getUTCDay() === 5 && utcHour >= 19;
     const isLowLiquidity = utcHour >= 22 || utcHour < 5;
 
     let sessionQuality: 'OPTIMAL' | 'GOOD' | 'FAIR' | 'POOR' = 'FAIR';
@@ -1335,8 +1349,8 @@ const ExecutionStatusPanel = () => {
                         <span className="text-xs font-bold uppercase tracking-wider text-cyan-400">Execution Window</span>
                     </div>
                     <div className="flex items-center gap-2">
-                        <span className="text-[10px] font-mono text-gray-500">
-                            {now.toUTCString().slice(17, 22)} UTC
+                        <span className="text-[10px] font-mono text-gray-500" suppressHydrationWarning>
+                            {timeStr}
                         </span>
                         <span className={cn("text-[10px] font-bold px-1.5 py-0.5 rounded", qualityColors[sessionQuality])}>
                             {sessionQuality}
@@ -1358,6 +1372,125 @@ const ExecutionStatusPanel = () => {
                             Avoid new entries
                         </div>
                     )}
+                </div>
+            </CardContent>
+        </Card>
+    );
+};
+
+// --- CURRENCY STRENGTH PANEL (Forex Analysis) ---
+const CurrencyStrengthPanel = ({ assets, macro }: { assets: ScoredAsset[]; macro: unknown }) => {
+    const forexAssets = assets.filter(a => a.assetClass === 'forex');
+    if (forexAssets.length === 0) return null;
+
+    const m = (typeof macro === 'object' && macro !== null) ? (macro as Record<string, unknown>) : {};
+    const dollarIndex = typeof m.dollarIndex === 'number' ? m.dollarIndex : null;
+
+    // Extract currency pairs and calculate strength
+    const currencies: Record<string, { strength: number; pairs: number; bullish: number; bearish: number }> = {};
+    
+    const currencyList = ['USD', 'EUR', 'GBP', 'JPY', 'CHF', 'AUD', 'CAD', 'NZD'];
+    currencyList.forEach(c => currencies[c] = { strength: 50, pairs: 0, bullish: 0, bearish: 0 });
+
+    forexAssets.forEach(asset => {
+        const sym = asset.symbol.replace('=X', '').toUpperCase();
+        const base = sym.slice(0, 3);
+        const quote = sym.slice(3, 6);
+        
+        if (currencies[base]) {
+            currencies[base].pairs++;
+            if (asset.signal === 'LONG') currencies[base].bullish++;
+            else currencies[base].bearish++;
+        }
+        if (currencies[quote]) {
+            currencies[quote].pairs++;
+            if (asset.signal === 'LONG') currencies[quote].bearish++;
+            else currencies[quote].bullish++;
+        }
+    });
+
+    // Calculate strength score (0-100)
+    Object.keys(currencies).forEach(c => {
+        const cur = currencies[c];
+        if (cur.pairs > 0) {
+            const bullishRatio = cur.bullish / cur.pairs;
+            cur.strength = Math.round(50 + (bullishRatio - 0.5) * 100);
+        }
+    });
+
+    // Sort by strength
+    const sorted = Object.entries(currencies)
+        .filter(([_, v]) => v.pairs > 0)
+        .sort((a, b) => b[1].strength - a[1].strength);
+
+    const getStrengthColor = (s: number) => {
+        if (s >= 70) return 'text-green-400 bg-green-500/20';
+        if (s >= 55) return 'text-blue-400 bg-blue-500/20';
+        if (s >= 45) return 'text-gray-400 bg-gray-500/20';
+        if (s >= 30) return 'text-orange-400 bg-orange-500/20';
+        return 'text-red-400 bg-red-500/20';
+    };
+
+    const getStrengthLabel = (s: number) => {
+        if (s >= 70) return 'STRONG';
+        if (s >= 55) return 'BULLISH';
+        if (s >= 45) return 'NEUTRAL';
+        if (s >= 30) return 'BEARISH';
+        return 'WEAK';
+    };
+
+    const currencyFlags: Record<string, string> = {
+        USD: '🇺🇸', EUR: '🇪🇺', GBP: '🇬🇧', JPY: '🇯🇵',
+        CHF: '🇨🇭', AUD: '🇦🇺', CAD: '🇨🇦', NZD: '🇳🇿'
+    };
+
+    return (
+        <Card className="bg-gray-900 border-gray-800 mb-4">
+            <CardContent className="p-4">
+                <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center gap-2">
+                        <Globe className="w-4 h-4 text-cyan-400" />
+                        <span className="text-xs font-bold uppercase tracking-wider text-cyan-400">Currency Strength Meter</span>
+                    </div>
+                    {dollarIndex && (
+                        <div className="text-[11px] font-mono text-gray-400">
+                            DXY: <span className="text-white font-bold">{dollarIndex.toFixed(2)}</span>
+                        </div>
+                    )}
+                </div>
+                <div className="grid grid-cols-4 md:grid-cols-8 gap-2">
+                    {sorted.map(([currency, data]) => (
+                        <div key={currency} className="flex flex-col items-center p-2 rounded border border-gray-800 bg-gray-950/50">
+                            <span className="text-lg">{currencyFlags[currency] || '🏳️'}</span>
+                            <span className="text-[11px] font-bold text-white">{currency}</span>
+                            <span className={cn("text-[10px] font-bold px-1.5 py-0.5 rounded mt-1", getStrengthColor(data.strength))}>
+                                {data.strength}
+                            </span>
+                            <span className="text-[9px] text-gray-500 mt-0.5">{getStrengthLabel(data.strength)}</span>
+                            <div className="text-[9px] text-gray-600 mt-1">
+                                <span className="text-green-500">{data.bullish}↑</span>
+                                <span className="mx-1">/</span>
+                                <span className="text-red-500">{data.bearish}↓</span>
+                            </div>
+                        </div>
+                    ))}
+                </div>
+                <div className="mt-3 text-[10px] text-gray-500 flex items-center gap-4">
+                    <span className="flex items-center gap-1">
+                        <span className="w-2 h-2 rounded-full bg-green-500"></span> 70+ Strong
+                    </span>
+                    <span className="flex items-center gap-1">
+                        <span className="w-2 h-2 rounded-full bg-blue-500"></span> 55-70 Bullish
+                    </span>
+                    <span className="flex items-center gap-1">
+                        <span className="w-2 h-2 rounded-full bg-gray-500"></span> 45-55 Neutral
+                    </span>
+                    <span className="flex items-center gap-1">
+                        <span className="w-2 h-2 rounded-full bg-orange-500"></span> 30-45 Bearish
+                    </span>
+                    <span className="flex items-center gap-1">
+                        <span className="w-2 h-2 rounded-full bg-red-500"></span> &lt;30 Weak
+                    </span>
                 </div>
             </CardContent>
         </Card>
@@ -1879,6 +2012,7 @@ export const CommandView = () => {
     const scannerTableScrollRafRef = useRef<number | null>(null);
     const scannerTableMeasuredRowHeightRef = useRef<number>(64);
     const scannerTableLastFilterKeyRef = useRef<string>('');
+    const scannerTableRowMeasuredRef = useRef<boolean>(false);
     const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
     const [stats, setStats] = useState({ total: 0, latency: 0 });
     const [feedDegraded, setFeedDegraded] = useState(false);
@@ -2797,11 +2931,13 @@ const executeSignal = useCallback((asset: ScoredAsset) => {
     }, []);
 
     const measureScannerTableRow = useCallback((node: HTMLTableRowElement | null) => {
-        if (!node) return;
+        if (!node || scannerTableRowMeasuredRef.current) return;
         const h = Math.round(node.getBoundingClientRect().height);
-        if (h > 0 && Math.abs(h - scannerTableMeasuredRowHeightRef.current) > 2) {
+        if (h > 0 && h !== scannerTableMeasuredRowHeightRef.current) {
             scannerTableMeasuredRowHeightRef.current = h;
-            setScannerTableRowHeight(h);
+            scannerTableRowMeasuredRef.current = true;
+            // Use setTimeout to avoid state update during render
+            setTimeout(() => setScannerTableRowHeight(h), 0);
         }
     }, []);
 
@@ -3004,6 +3140,9 @@ const executeSignal = useCallback((asset: ScoredAsset) => {
 
             {/* 2. MARKET CONTEXT (Real Evidence) */}
             <MarketContextPanel macro={macro} assets={assets} />
+
+            {/* 2.5. CURRENCY STRENGTH (Forex Analysis) */}
+            <CurrencyStrengthPanel assets={assets} macro={macro} />
 
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 h-[calc(100vh-240px)] min-h-[500px]">
 
@@ -3330,20 +3469,28 @@ const executeSignal = useCallback((asset: ScoredAsset) => {
 
                         <CardContent ref={scannerTableScrollRef} onScroll={onScannerTableScroll} className="p-0 flex-1 min-h-0 overflow-auto bg-gray-900">
                             <Table className="min-w-[1180px]">
-                                <TableHeader className="bg-gray-950 text-[10px] uppercase sticky top-0 z-10">
+                                <TableHeader className="bg-gray-950 text-[11px] uppercase sticky top-0 z-10">
                                     <TableRow className="hover:bg-transparent border-gray-800">
                                         <TableHead className="h-9 w-8 text-center text-gray-600">#</TableHead>
                                         <TableHead className="h-9 text-gray-400 font-bold w-56">Asset</TableHead>
                                         <TableHead className="h-9 text-cyan-400 font-bold w-20">Price</TableHead>
                                         <TableHead className="h-9 text-blue-400 font-bold w-10 text-center">RSI</TableHead>
                                         <TableHead className="h-9 text-yellow-400 font-bold w-10 text-center">RV</TableHead>
-                                        <TableHead className="h-9 text-gray-400 font-bold text-center w-16" title="Scan score (price/volume/liquidity confluence)">
+                                        <TableHead className="h-9 text-gray-400 font-bold text-center w-16" title="Scan score: 80+ HIGH (verde), 50-80 MED (amarelo), <50 LOW (vermelho)">
                                             <div className="leading-none">Scan</div>
-                                            <div className="text-[9px] text-gray-600 font-normal normal-case">score</div>
+                                            <div className="text-[9px] text-gray-600 font-normal normal-case flex items-center justify-center gap-1">
+                                                <span className="w-1.5 h-1.5 rounded-full bg-green-500" title="80+"></span>
+                                                <span className="w-1.5 h-1.5 rounded-full bg-yellow-500" title="50-80"></span>
+                                                <span className="w-1.5 h-1.5 rounded-full bg-red-500" title="<50"></span>
+                                            </div>
                                         </TableHead>
-                                        <TableHead className="h-9 text-gray-200 font-bold text-center w-16" title="Final score (Macro + MESO + MICRO overlays)">
+                                        <TableHead className="h-9 text-gray-200 font-bold text-center w-16" title="Final score: 80+ ALTA confiança (verde), 65-80 MÉDIA (amarelo), <65 BAIXA (cinza)">
                                             <div className="leading-none">Final</div>
-                                            <div className="text-[9px] text-gray-600 font-normal normal-case">score</div>
+                                            <div className="text-[9px] text-gray-600 font-normal normal-case flex items-center justify-center gap-1">
+                                                <span className="w-1.5 h-1.5 rounded-full bg-green-500" title="80+ Alta"></span>
+                                                <span className="w-1.5 h-1.5 rounded-full bg-yellow-500" title="65-80 Média"></span>
+                                                <span className="w-1.5 h-1.5 rounded-full bg-gray-500" title="<65 Baixa"></span>
+                                            </div>
                                         </TableHead>
                                         <TableHead className="h-9 text-gray-400 font-bold w-16">Trend</TableHead>
                                         <TableHead className="h-9 text-gray-400 font-bold w-14">Signal</TableHead>
@@ -3356,7 +3503,7 @@ const executeSignal = useCallback((asset: ScoredAsset) => {
                                         <TableHead className="h-9 text-gray-400 font-bold text-center w-10">Act</TableHead>
                                     </TableRow>
                                 </TableHeader>
-                                <TableBody className="text-xs font-mono">
+                                <TableBody className="text-[13px] font-mono">
                                     {loading ? (
                                         <TableRow>
                                             <TableCell colSpan={16} className="h-24 text-center text-gray-500">Connecting to global markets...</TableCell>
