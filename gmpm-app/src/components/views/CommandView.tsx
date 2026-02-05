@@ -1282,14 +1282,17 @@ const ExecutionStatusPanel = () => {
     const [timeStr, setTimeStr] = useState('--:-- UTC');
     
     useEffect(() => {
-        setMounted(true);
+        const mountTimer = setTimeout(() => setMounted(true), 0);
         const update = () => {
             const now = new Date();
             setTimeStr(`${now.toUTCString().slice(17, 22)} UTC`);
         };
         update();
         const interval = setInterval(update, 30000);
-        return () => clearInterval(interval);
+        return () => {
+            clearTimeout(mountTimer);
+            clearInterval(interval);
+        };
     }, []);
 
     const now = new Date();
@@ -2535,56 +2538,81 @@ const executeSignal = useCallback((asset: ScoredAsset) => {
         let alive = true;
         const fetchFullPipeline = async () => {
             try {
-                // Fetch all three in parallel
-                const [regimeRes, mesoRes, microRes] = await Promise.all([
-                    fetch('/api/regime', { cache: 'no-store' }),
-                    fetch('/api/meso', { cache: 'no-store' }),
-                    fetch('/api/micro', { cache: 'no-store' })
-                ]);
-                
-                const regimeData = await regimeRes.json();
-                const mesoDataRes = await mesoRes.json();
-                const microDataRes = await microRes.json();
-                
-                if (alive && regimeData.success && regimeData.snapshot) {
-                    setRegime(regimeData.snapshot as RegimeSnapshot);
+                const fetchWithTimeout = async (url: string, timeoutMs: number) => {
+                    const controller = new AbortController();
+                    const t = setTimeout(() => controller.abort(), timeoutMs);
+                    try {
+                        return await fetch(url, { cache: 'no-store', signal: controller.signal });
+                    } finally {
+                        clearTimeout(t);
+                    }
+                };
+
+                const regimeResP = fetchWithTimeout('/api/regime', 25_000);
+                const mesoResP = fetchWithTimeout('/api/meso', 45_000);
+                const microResP = fetchWithTimeout('/api/micro', 45_000);
+
+                // REGIME: never block on meso/micro
+                try {
+                    const regimeRes = await regimeResP;
+                    const regimeData = await regimeRes.json();
+                    if (alive && regimeData.success && regimeData.snapshot) {
+                        setRegime(regimeData.snapshot as RegimeSnapshot);
+                    }
+                } catch (e) {
+                    console.error('Regime fetch error', e);
+                } finally {
+                    if (alive) setRegimeLoading(false);
                 }
-                
-                if (alive && mesoDataRes.success) {
-                    setMesoData({
-                        weeklyThesis: mesoDataRes.temporalFocus?.weeklyThesis || '',
-                        dailyFocus: mesoDataRes.temporalFocus?.dailyFocus || [],
-                        favoredDirection: mesoDataRes.microInputs?.favoredDirection || 'NEUTRAL',
-                        volatilityContext: mesoDataRes.microInputs?.volatilityContext || 'NORMAL',
-                        allowedInstruments: mesoDataRes.microInputs?.allowedInstruments || [],
-                        prohibitedInstruments: mesoDataRes.microInputs?.prohibitedInstruments || [],
-                        marketBias: mesoDataRes.executiveSummary?.marketBias || 'NEUTRAL',
-                    });
+
+                // MESO
+                try {
+                    const mesoRes = await mesoResP;
+                    const mesoDataRes = await mesoRes.json();
+                    if (alive && mesoDataRes.success) {
+                        setMesoData({
+                            weeklyThesis: mesoDataRes.temporalFocus?.weeklyThesis || '',
+                            dailyFocus: mesoDataRes.temporalFocus?.dailyFocus || [],
+                            favoredDirection: mesoDataRes.microInputs?.favoredDirection || 'NEUTRAL',
+                            volatilityContext: mesoDataRes.microInputs?.volatilityContext || 'NORMAL',
+                            allowedInstruments: mesoDataRes.microInputs?.allowedInstruments || [],
+                            prohibitedInstruments: mesoDataRes.microInputs?.prohibitedInstruments || [],
+                            marketBias: mesoDataRes.executiveSummary?.marketBias || 'NEUTRAL',
+                        });
+                    }
+                } catch (e) {
+                    console.error('Meso fetch error', e);
                 }
-                
-                // Process MICRO setups and full analyses
-                if (alive && microDataRes.success && Array.isArray(microDataRes.analyses)) {
-                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                    const setups = microDataRes.analyses.map((a: any) => ({
-                        symbol: a.symbol,
-                        displaySymbol: a.displaySymbol,
-                        action: a.recommendation.action as 'EXECUTE' | 'WAIT' | 'AVOID',
-                        metrics: a.recommendation.metrics,
-                        setup: a.recommendation.bestSetup || (a.setups.length > 0 ? a.setups[0] : null),
-                    }));
-                    setMicroSetups(setups);
-                    
-                    // Store full analyses for expanded view (including scenarioAnalysis + liquidityAnalysis)
-                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                    const analyses = microDataRes.analyses.map((a: any) => ({
-                        symbol: a.symbol,
-                        displaySymbol: a.displaySymbol,
-                        price: a.price,
-                        technical: a.technical,
-                        scenarioAnalysis: a.scenarioAnalysis,
-                        liquidityAnalysis: a.liquidityAnalysis,
-                    }));
-                    setMicroAnalyses(analyses);
+
+                // MICRO
+                try {
+                    const microRes = await microResP;
+                    const microDataRes = await microRes.json();
+                    if (alive && microDataRes.success && Array.isArray(microDataRes.analyses)) {
+                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                        const setups = microDataRes.analyses.map((a: any) => ({
+                            symbol: a.symbol,
+                            displaySymbol: a.displaySymbol,
+                            action: a.recommendation.action as 'EXECUTE' | 'WAIT' | 'AVOID',
+                            metrics: a.recommendation.metrics,
+                            setup: a.recommendation.bestSetup || (a.setups.length > 0 ? a.setups[0] : null),
+                        }));
+                        setMicroSetups(setups);
+
+                        // Store full analyses for expanded view (including scenarioAnalysis + liquidityAnalysis)
+                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                        const analyses = microDataRes.analyses.map((a: any) => ({
+                            symbol: a.symbol,
+                            displaySymbol: a.displaySymbol,
+                            price: a.price,
+                            technical: a.technical,
+                            scenarioAnalysis: a.scenarioAnalysis,
+                            liquidityAnalysis: a.liquidityAnalysis,
+                        }));
+                        setMicroAnalyses(analyses);
+                    }
+                } catch (e) {
+                    console.error('Micro fetch error', e);
                 }
             } catch (e) {
                 console.error('Pipeline fetch error', e);

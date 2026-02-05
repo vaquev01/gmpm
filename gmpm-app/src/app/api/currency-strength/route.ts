@@ -139,6 +139,53 @@ interface CurrencyStrength {
     correlations: CurrencyCorrelation[];
 }
 
+function getFxExecutionWindow(): string {
+    const utcHour = new Date().getUTCHours();
+    if (utcHour >= 22 || utcHour < 2) return 'ASIA (agora - 3h)';
+    if (utcHour >= 2 && utcHour < 7) return 'ASIA→LONDON (pré-abertura)';
+    if (utcHour >= 7 && utcHour < 12) return 'LONDON (agora - 4h)';
+    if (utcHour >= 12 && utcHour < 16) return 'LONDON→NEW YORK (overlap)';
+    if (utcHour >= 16 && utcHour < 21) return 'NEW YORK (agora - 4h)';
+    return 'FIM DE NY / AFTER HOURS';
+}
+
+function roundPrice(p: number): number {
+    if (!Number.isFinite(p)) return 0;
+    return p < 10 ? Number(p.toFixed(5)) : Number(p.toFixed(2));
+}
+
+function buildTradePlan(price: number, direction: TradeDirection, confidence: 'HIGH' | 'MEDIUM' | 'LOW'): TradePlan {
+    const slPct = confidence === 'HIGH' ? 0.35 : confidence === 'MEDIUM' ? 0.5 : 0.7;
+    const rrTarget = confidence === 'HIGH' ? 2.0 : confidence === 'MEDIUM' ? 1.6 : 1.3;
+    const entryBandPct = 0.05;
+
+    const entryFrom = price * (1 - entryBandPct / 100);
+    const entryTo = price * (1 + entryBandPct / 100);
+
+    const stopLoss = direction === 'LONG'
+        ? price * (1 - slPct / 100)
+        : price * (1 + slPct / 100);
+
+    const takeProfit = direction === 'LONG'
+        ? price * (1 + (slPct * rrTarget) / 100)
+        : price * (1 - (slPct * rrTarget) / 100);
+
+    const slDist = Math.abs(price - stopLoss);
+    const tpDist = Math.abs(takeProfit - price);
+    const riskReward = slDist > 0 ? tpDist / slDist : rrTarget;
+
+    const horizon = confidence === 'HIGH' ? '4-12h' : confidence === 'MEDIUM' ? '12-24h' : '1-3 dias';
+
+    return {
+        entryZone: { from: roundPrice(entryFrom), to: roundPrice(entryTo) },
+        stopLoss: roundPrice(stopLoss),
+        takeProfit: roundPrice(takeProfit),
+        riskReward: Math.round(riskReward * 100) / 100,
+        horizon,
+        executionWindow: getFxExecutionWindow(),
+    };
+}
+
 interface EconomicIndicators {
     interestRate: number | null;
     inflation: number | null;
@@ -187,6 +234,17 @@ interface ForexPair {
     changePercent: number;
     signal: 'LONG' | 'SHORT';
     strength: number;
+}
+
+type TradeDirection = 'LONG' | 'SHORT';
+
+interface TradePlan {
+    entryZone: { from: number; to: number };
+    stopLoss: number;
+    takeProfit: number;
+    riskReward: number;
+    horizon: string;
+    executionWindow: string;
 }
 
 // Simulated economic data (in production, fetch from FRED API or similar)
@@ -295,7 +353,7 @@ function getFlowAnalysis(currency: CurrencyCode, strength: number): FlowAnalysis
 }
 
 // Calculate correlations between currencies
-function getCorrelations(currency: CurrencyCode, strengths: Map<CurrencyCode, number>): CurrencyCorrelation[] {
+function getCorrelations(currency: CurrencyCode): CurrencyCorrelation[] {
     const correlationMatrix: Record<string, number> = {
         'USD-EUR': -0.85, 'USD-GBP': -0.75, 'USD-JPY': 0.20, 'USD-CHF': -0.90,
         'USD-AUD': -0.70, 'USD-CAD': -0.60, 'USD-NZD': -0.65,
@@ -503,7 +561,7 @@ export async function GET() {
 
         // Add correlations
         for (const curr of currencies) {
-            curr.correlations = getCorrelations(curr.code, strengths);
+            curr.correlations = getCorrelations(curr.code);
         }
 
         // Sort by strength
@@ -531,15 +589,19 @@ export async function GET() {
             const differential = Math.abs(baseStrength - quoteStrength);
             
             if (differential >= 15) {
+                const direction: TradeDirection = baseStrength > quoteStrength ? 'LONG' : 'SHORT';
+                const confidence: 'HIGH' | 'MEDIUM' | 'LOW' = differential >= 30 ? 'HIGH' : differential >= 20 ? 'MEDIUM' : 'LOW';
                 bestPairs.push({
                     symbol: pair.symbol,
                     base: pair.base,
                     quote: pair.quote,
-                    direction: baseStrength > quoteStrength ? 'LONG' : 'SHORT',
+                    direction,
                     differential,
                     baseStrength,
                     quoteStrength,
-                    confidence: differential >= 30 ? 'HIGH' : differential >= 20 ? 'MEDIUM' : 'LOW',
+                    confidence,
+                    price: pair.price,
+                    tradePlan: buildTradePlan(pair.price, direction, confidence),
                 });
             }
         }

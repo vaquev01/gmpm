@@ -123,10 +123,19 @@ function generateConclusion(data: LiquidityMapData): {
     action: 'WAIT_LONG' | 'WAIT_SHORT' | 'MONITOR' | 'NO_TRADE';
     confidence: 'HIGH' | 'MEDIUM' | 'LOW';
     summary: string;
+    entryZone?: { from: number; to: number };
+    stopLoss?: number;
+    takeProfit?: number;
+    riskReward?: number;
     target: string;
     invalidation: string;
     timing: string;
+    horizon?: string;
 } {
+    const roundPrice = (p: number) => (p < 10 ? Number(p.toFixed(5)) : Number(p.toFixed(2)));
+    const band = Math.max(data.atr * 0.1, data.currentPrice * 0.001);
+    const slBuffer = Math.max(data.atr * 0.25, data.currentPrice * 0.002);
+
     const nearestBuy = data.buySideLiquidity[0];
     const nearestSell = data.sellSideLiquidity[0];
     const distToBuy = nearestBuy ? ((nearestBuy.level - data.currentPrice) / data.currentPrice * 100) : null;
@@ -134,25 +143,49 @@ function generateConclusion(data: LiquidityMapData): {
     const sweepProb = data.timing?.probabilityOfSweep || 0;
     
     // Determine action based on market direction and liquidity proximity
-    if (data.marketDirection === 'SEEKING_BUYSIDE' && nearestBuy && distToBuy && distToBuy < 2) {
-        return {
-            action: 'WAIT_LONG',
-            confidence: sweepProb >= 60 ? 'HIGH' : sweepProb >= 40 ? 'MEDIUM' : 'LOW',
-            summary: `Mercado buscando liquidez em ${nearestBuy.level.toFixed(data.currentPrice < 10 ? 4 : 2)}. Esperar sweep e reversão para LONG.`,
-            target: `${(nearestBuy.level * 1.005).toFixed(data.currentPrice < 10 ? 4 : 2)} (+0.5%)`,
-            invalidation: `Fechamento acima de ${(nearestBuy.level * 1.01).toFixed(data.currentPrice < 10 ? 4 : 2)}`,
-            timing: data.timing?.nextLikelyWindow || 'Próxima sessão'
-        };
-    }
-    
-    if (data.marketDirection === 'SEEKING_SELLSIDE' && nearestSell && distToSell && distToSell < 2) {
+    if (data.marketDirection === 'SEEKING_BUYSIDE' && nearestBuy && distToBuy !== null && distToBuy < 2) {
+        const entryFrom = nearestBuy.level - band;
+        const entryTo = nearestBuy.level + band * 0.25;
+        const stopLoss = nearestBuy.level + slBuffer;
+        const takeProfit = data.poc.price < entryFrom ? data.poc.price : (data.valueArea.low < entryFrom ? data.valueArea.low : (data.currentPrice - data.atr));
+        const entryMid = (entryFrom + entryTo) / 2;
+        const rr = Math.abs(entryMid - takeProfit) / Math.abs(stopLoss - entryMid);
+
         return {
             action: 'WAIT_SHORT',
             confidence: sweepProb >= 60 ? 'HIGH' : sweepProb >= 40 ? 'MEDIUM' : 'LOW',
-            summary: `Mercado buscando liquidez em ${nearestSell.level.toFixed(data.currentPrice < 10 ? 4 : 2)}. Esperar sweep e reversão para SHORT.`,
-            target: `${(nearestSell.level * 0.995).toFixed(data.currentPrice < 10 ? 4 : 2)} (-0.5%)`,
-            invalidation: `Fechamento abaixo de ${(nearestSell.level * 0.99).toFixed(data.currentPrice < 10 ? 4 : 2)}`,
-            timing: data.timing?.nextLikelyWindow || 'Próxima sessão'
+            summary: `Buy-side acima (${nearestBuy.level.toFixed(data.currentPrice < 10 ? 4 : 2)}). Esperar sweep acima e entrar SHORT na reversão (rejeição).`,
+            entryZone: { from: roundPrice(entryFrom), to: roundPrice(entryTo) },
+            stopLoss: roundPrice(stopLoss),
+            takeProfit: roundPrice(takeProfit),
+            riskReward: Math.round(rr * 100) / 100,
+            target: `${roundPrice(takeProfit)}`,
+            invalidation: `Fechamento acima de ${roundPrice(stopLoss)}`,
+            timing: data.timing?.nextLikelyWindow || 'Próxima sessão',
+            horizon: data.timing?.avgTimeToLiquidityGrab || '2-6h',
+        };
+    }
+    
+    if (data.marketDirection === 'SEEKING_SELLSIDE' && nearestSell && distToSell !== null && distToSell < 2) {
+        const entryFrom = nearestSell.level - band * 0.25;
+        const entryTo = nearestSell.level + band;
+        const stopLoss = nearestSell.level - slBuffer;
+        const takeProfit = data.poc.price > entryTo ? data.poc.price : (data.valueArea.high > entryTo ? data.valueArea.high : (data.currentPrice + data.atr));
+        const entryMid = (entryFrom + entryTo) / 2;
+        const rr = Math.abs(takeProfit - entryMid) / Math.abs(entryMid - stopLoss);
+
+        return {
+            action: 'WAIT_LONG',
+            confidence: sweepProb >= 60 ? 'HIGH' : sweepProb >= 40 ? 'MEDIUM' : 'LOW',
+            summary: `Sell-side abaixo (${nearestSell.level.toFixed(data.currentPrice < 10 ? 4 : 2)}). Esperar sweep abaixo e entrar LONG na reversão (reclaim).`,
+            entryZone: { from: roundPrice(entryFrom), to: roundPrice(entryTo) },
+            stopLoss: roundPrice(stopLoss),
+            takeProfit: roundPrice(takeProfit),
+            riskReward: Math.round(rr * 100) / 100,
+            target: `${roundPrice(takeProfit)}`,
+            invalidation: `Fechamento abaixo de ${roundPrice(stopLoss)}`,
+            timing: data.timing?.nextLikelyWindow || 'Próxima sessão',
+            horizon: data.timing?.avgTimeToLiquidityGrab || '2-6h',
         };
     }
     
@@ -188,9 +221,10 @@ const ActionableInsightsPanel = ({ assets }: { assets: LiquidityMapData[] }) => 
             return (confOrder[a.conclusion.confidence] - confOrder[b.conclusion.confidence]) ||
                    (actOrder[a.conclusion.action] - actOrder[b.conclusion.action]);
         });
-    
-    const topPicks = opportunities.filter(x => x.conclusion.confidence === 'HIGH').slice(0, 3);
-    const watchlist = opportunities.filter(x => x.conclusion.confidence === 'MEDIUM').slice(0, 5);
+
+    const actionable = opportunities.filter(x => x.conclusion.action === 'WAIT_LONG' || x.conclusion.action === 'WAIT_SHORT');
+    const topPicks = actionable.filter(x => x.conclusion.confidence === 'HIGH').slice(0, 3);
+    const watchlist = actionable.filter(x => x.conclusion.confidence === 'MEDIUM').slice(0, 6);
     
     // Market overview
     const seekingBuy = assets.filter(a => a.marketDirection === 'SEEKING_BUYSIDE').length;
@@ -221,8 +255,8 @@ const ActionableInsightsPanel = ({ assets }: { assets: LiquidityMapData[] }) => 
                                 marketBias === 'BULLISH' ? "text-green-400" :
                                 marketBias === 'BEARISH' ? "text-red-400" : "text-gray-400"
                             )}>
-                                {marketBias === 'BULLISH' ? '🟢 COMPRADORES BUSCANDO LIQUIDEZ' :
-                                 marketBias === 'BEARISH' ? '🔴 VENDEDORES BUSCANDO LIQUIDEZ' :
+                                {marketBias === 'BULLISH' ? '🟣 LIQUIDEZ ACIMA (BUY-SIDE DOMINANTE)' :
+                                 marketBias === 'BEARISH' ? '🟡 LIQUIDEZ ABAIXO (SELL-SIDE DOMINANTE)' :
                                  '⚪ MERCADO EQUILIBRADO'}
                             </div>
                             <div className="text-[11px] text-gray-400">
@@ -233,9 +267,9 @@ const ActionableInsightsPanel = ({ assets }: { assets: LiquidityMapData[] }) => 
                             <div className="text-[10px] text-gray-500 uppercase">O Que Isso Significa</div>
                             <div className="text-[11px] text-gray-300">
                                 {marketBias === 'BULLISH' ? 
-                                    '• Institucionais posicionados para alta\n• Esperar sweeps de liquidez ACIMA para entrar SHORT\n• Ou aguardar confirmação de reversão para LONG' :
+                                    '• Muitos ativos buscando stops acima (buy-side)\n• Plano principal: esperar sweep acima e procurar SHORT na rejeição\n• Alternativa: se houver reclaim/continuação, operar pullback LONG' :
                                  marketBias === 'BEARISH' ? 
-                                    '• Institucionais posicionados para baixa\n• Esperar sweeps de liquidez ABAIXO para entrar LONG\n• Ou aguardar confirmação de reversão para SHORT' :
+                                    '• Muitos ativos buscando stops abaixo (sell-side)\n• Plano principal: esperar sweep abaixo e procurar LONG no reclaim\n• Alternativa: se houver continuação, operar pullback SHORT' :
                                     '• Mercado sem direção clara\n• Aguardar definição de bias\n• Operar apenas níveis muito claros'}
                             </div>
                         </div>
@@ -248,9 +282,9 @@ const ActionableInsightsPanel = ({ assets }: { assets: LiquidityMapData[] }) => 
                                 "bg-yellow-500/10 border-yellow-500/30 text-yellow-300"
                             )}>
                                 {marketBias === 'BULLISH' ? 
-                                    '✓ Priorizar operações de COMPRA após sweeps' :
+                                    '✓ Priorizar SHORT após sweep acima (rejeição)' :
                                  marketBias === 'BEARISH' ? 
-                                    '✓ Priorizar operações de VENDA após sweeps' :
+                                    '✓ Priorizar LONG após sweep abaixo (reclaim)' :
                                     '⚠️ Reduzir exposição e aguardar clareza'}
                             </div>
                         </div>
@@ -290,17 +324,27 @@ const ActionableInsightsPanel = ({ assets }: { assets: LiquidityMapData[] }) => 
                                             <div className="text-gray-400 mb-1">📋 Plano de Ação:</div>
                                             <div className="text-gray-200">{conclusion.summary}</div>
                                         </div>
-                                        
-                                        <div className="grid grid-cols-2 gap-2">
-                                            <div>
-                                                <span className="text-gray-500">🎯 Target:</span>
-                                                <div className="text-cyan-400 font-mono font-bold">{conclusion.target}</div>
+
+                                        {conclusion.entryZone && typeof conclusion.stopLoss === 'number' && typeof conclusion.takeProfit === 'number' && (
+                                            <div className="grid grid-cols-2 gap-2">
+                                                <div>
+                                                    <span className="text-gray-500">Entry:</span>
+                                                    <div className="text-cyan-400 font-mono font-bold">{conclusion.entryZone.from} - {conclusion.entryZone.to}</div>
+                                                </div>
+                                                <div>
+                                                    <span className="text-gray-500">RR / Tempo:</span>
+                                                    <div className="text-purple-400">{conclusion.riskReward ? `RR ${conclusion.riskReward}` : 'RR'} • {conclusion.horizon || conclusion.timing}</div>
+                                                </div>
+                                                <div>
+                                                    <span className="text-gray-500">SL:</span>
+                                                    <div className="text-red-400 font-mono font-bold">{conclusion.stopLoss}</div>
+                                                </div>
+                                                <div>
+                                                    <span className="text-gray-500">TP:</span>
+                                                    <div className="text-green-400 font-mono font-bold">{conclusion.takeProfit}</div>
+                                                </div>
                                             </div>
-                                            <div>
-                                                <span className="text-gray-500">⏰ Timing:</span>
-                                                <div className="text-purple-400">{conclusion.timing}</div>
-                                            </div>
-                                        </div>
+                                        )}
                                         
                                         <div className="pt-2 border-t border-gray-800">
                                             <span className="text-gray-500">🚫 Invalidação:</span>
@@ -335,10 +379,24 @@ const ActionableInsightsPanel = ({ assets }: { assets: LiquidityMapData[] }) => 
                                         </Badge>
                                     </div>
                                     <div className="text-[10px] text-gray-400">{conclusion.summary.slice(0, 60)}...</div>
-                                    <div className="mt-2 text-[9px]">
-                                        <span className="text-gray-500">Target: </span>
-                                        <span className="text-cyan-400 font-mono">{conclusion.target}</span>
-                                    </div>
+                                    {conclusion.entryZone && (
+                                        <div className="mt-2 text-[9px] space-y-1">
+                                            <div>
+                                                <span className="text-gray-500">Entry: </span>
+                                                <span className="text-cyan-400 font-mono">{conclusion.entryZone.from}-{conclusion.entryZone.to}</span>
+                                            </div>
+                                            <div>
+                                                <span className="text-gray-500">TP/SL: </span>
+                                                <span className="text-green-400 font-mono">{conclusion.takeProfit}</span>
+                                                <span className="text-gray-600"> / </span>
+                                                <span className="text-red-400 font-mono">{conclusion.stopLoss}</span>
+                                            </div>
+                                            <div>
+                                                <span className="text-gray-500">Tempo: </span>
+                                                <span className="text-purple-400">{conclusion.horizon || conclusion.timing}</span>
+                                            </div>
+                                        </div>
+                                    )}
                                 </div>
                             ))}
                         </div>
@@ -349,9 +407,9 @@ const ActionableInsightsPanel = ({ assets }: { assets: LiquidityMapData[] }) => 
             {/* Legend */}
             <div className="p-3 bg-gray-950/50 rounded-lg border border-gray-800">
                 <div className="text-[10px] text-gray-400 text-center space-x-4">
-                    <span>💡 <strong className="text-green-400">LONG</strong> = Esperar sweep + reversão para compra</span>
+                    <span>💡 <strong className="text-green-400">LONG</strong> = Sweep abaixo + reclaim (reversão)</span>
                     <span>|</span>
-                    <span><strong className="text-red-400">SHORT</strong> = Esperar sweep + reversão para venda</span>
+                    <span><strong className="text-red-400">SHORT</strong> = Sweep acima + rejeição (reversão)</span>
                     <span>|</span>
                     <span><strong className="text-yellow-400">WATCH</strong> = Aguardar aproximação do preço</span>
                 </div>
@@ -409,6 +467,7 @@ const VolumeBar = ({ bar, maxVolume, currentPrice }: {
 // Asset Liquidity Card
 const AssetLiquidityCard = ({ data }: { data: LiquidityMapData }) => {
     const DirIcon = directionIcons[data.marketDirection];
+    const conclusion = generateConclusion(data);
     const maxVolume = Math.max(...data.volumeProfile.map(b => b.volume), 1);
     
     // Get top 10 volume bars around current price
@@ -432,6 +491,18 @@ const AssetLiquidityCard = ({ data }: { data: LiquidityMapData }) => {
                         <Badge variant="outline" className="text-[9px]">
                             {data.assetClass.toUpperCase()}
                         </Badge>
+                        {conclusion.action !== 'NO_TRADE' && (
+                            <Badge className={cn(
+                                "text-[9px]",
+                                conclusion.action === 'WAIT_LONG' ? "bg-green-500/20 text-green-400" :
+                                conclusion.action === 'WAIT_SHORT' ? "bg-red-500/20 text-red-400" :
+                                "bg-yellow-500/20 text-yellow-400"
+                            )}>
+                                {conclusion.action === 'WAIT_LONG' ? 'PLAN LONG' :
+                                 conclusion.action === 'WAIT_SHORT' ? 'PLAN SHORT' :
+                                 'MONITORAR'}
+                            </Badge>
+                        )}
                     </div>
                     <Badge className={cn("text-[10px]", directionColors[data.marketDirection])}>
                         <DirIcon className="w-3 h-3 mr-1" />
@@ -445,6 +516,38 @@ const AssetLiquidityCard = ({ data }: { data: LiquidityMapData }) => {
                 </div>
             </CardHeader>
             <CardContent className="space-y-3">
+                {conclusion.action !== 'NO_TRADE' && conclusion.entryZone && conclusion.stopLoss && conclusion.takeProfit && (
+                    <div className="bg-gray-950/40 rounded-lg border border-gray-800 p-3">
+                        <div className="text-[10px] text-gray-500 uppercase mb-2 flex items-center justify-between">
+                            <span>Trade Plan</span>
+                            <span className={cn(
+                                conclusion.confidence === 'HIGH' ? 'text-green-400' : conclusion.confidence === 'MEDIUM' ? 'text-yellow-400' : 'text-gray-400'
+                            )}>Conf: {conclusion.confidence}{typeof conclusion.riskReward === 'number' ? ` • RR ${conclusion.riskReward}` : ''}</span>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2 text-[10px]">
+                            <div>
+                                <div className="text-gray-500">Entry</div>
+                                <div className="text-cyan-400 font-mono">
+                                    {conclusion.entryZone.from} - {conclusion.entryZone.to}
+                                </div>
+                            </div>
+                            <div>
+                                <div className="text-gray-500">Time</div>
+                                <div className="text-purple-400">{conclusion.horizon || conclusion.timing}</div>
+                            </div>
+                            <div>
+                                <div className="text-gray-500">SL</div>
+                                <div className="text-red-400 font-mono">{conclusion.stopLoss}</div>
+                            </div>
+                            <div>
+                                <div className="text-gray-500">TP</div>
+                                <div className="text-green-400 font-mono">{conclusion.takeProfit}</div>
+                            </div>
+                        </div>
+                        <div className="mt-2 text-[10px] text-gray-400">{conclusion.summary}</div>
+                    </div>
+                )}
+
                 {/* Volume Profile */}
                 <div>
                     <div className="text-[10px] text-gray-500 uppercase mb-1">Volume Profile</div>

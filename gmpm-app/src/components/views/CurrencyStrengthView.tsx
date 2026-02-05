@@ -32,6 +32,15 @@ interface CurrencyStrength {
 interface BestPair {
     symbol: string; base: string; quote: string; direction: 'LONG' | 'SHORT';
     differential: number; baseStrength: number; quoteStrength: number; confidence: 'HIGH' | 'MEDIUM' | 'LOW';
+    price?: number;
+    tradePlan?: {
+        entryZone: { from: number; to: number };
+        stopLoss: number;
+        takeProfit: number;
+        riskReward: number;
+        horizon: string;
+        executionWindow: string;
+    };
 }
 
 interface EconomicEvent {
@@ -87,6 +96,17 @@ export default function CurrencyStrengthView() {
     const getStrengthColor = (l: string) => l === 'STRONG' ? 'text-green-400 bg-green-500/20' : l === 'BULLISH' ? 'text-emerald-400 bg-emerald-500/20' : l === 'BEARISH' ? 'text-orange-400 bg-orange-500/20' : l === 'WEAK' ? 'text-red-400 bg-red-500/20' : 'text-gray-400 bg-gray-500/20';
     const getStrengthBarColor = (s: number) => s >= 70 ? 'bg-green-500' : s >= 55 ? 'bg-emerald-500' : s >= 45 ? 'bg-gray-500' : s >= 30 ? 'bg-orange-500' : 'bg-red-500';
     const getRiskColor = (p: string) => p === 'SAFE_HAVEN' ? 'text-blue-400 bg-blue-500/20' : p === 'RISK_ON' ? 'text-green-400 bg-green-500/20' : 'text-gray-400 bg-gray-500/20';
+    const fmtPrice = (p?: number) => {
+        if (typeof p !== 'number' || !Number.isFinite(p)) return 'N/A';
+        return p < 10 ? p.toFixed(5) : p.toFixed(2);
+    };
+
+    const idealPair = useMemo(() => {
+        if (!data?.bestPairs?.length || !data?.globalFlow) return null;
+        const direct = `${data.globalFlow.dominantFlow}${data.globalFlow.weakestCurrency}=X`;
+        const inverse = `${data.globalFlow.weakestCurrency}${data.globalFlow.dominantFlow}=X`;
+        return data.bestPairs.find(p => p.symbol === direct) || data.bestPairs.find(p => p.symbol === inverse) || null;
+    }, [data]);
 
     if (loading && !data) return <div className="p-6 flex items-center justify-center h-[calc(100vh-200px)]"><RefreshCw className="w-8 h-8 animate-spin text-cyan-500" /></div>;
     if (error) return <div className="p-6"><Card className="bg-red-950/20 border-red-900/30"><CardContent className="p-6 text-center"><AlertTriangle className="w-8 h-8 text-red-500 mx-auto mb-4" /><p className="text-red-400">{error}</p><Button onClick={fetchData} className="mt-4">Retry</Button></CardContent></Card></div>;
@@ -172,8 +192,35 @@ export default function CurrencyStrengthView() {
                                             <span className="text-lg">{data.currencies.find(c => c.code === data.globalFlow.weakestCurrency)?.flag}</span>
                                         </div>
                                         <div className="text-[11px] text-purple-400">
-                                            Par ideal: {data.globalFlow.dominantFlow}{data.globalFlow.weakestCurrency} → LONG
+                                            Par negociável: {(idealPair?.symbol || `${data.globalFlow.dominantFlow}${data.globalFlow.weakestCurrency}=X`).replace('=X', '')} → {idealPair?.direction || 'LONG'}
                                         </div>
+
+                                        {idealPair?.tradePlan && (
+                                            <div className="mt-3 grid grid-cols-2 gap-2 text-[10px] text-left">
+                                                <div className="bg-gray-950/40 rounded p-2 border border-gray-800">
+                                                    <div className="text-gray-500">Entry</div>
+                                                    <div className="text-cyan-400 font-mono font-bold">
+                                                        {fmtPrice(idealPair.tradePlan.entryZone.from)} - {fmtPrice(idealPair.tradePlan.entryZone.to)}
+                                                    </div>
+                                                </div>
+                                                <div className="bg-gray-950/40 rounded p-2 border border-gray-800">
+                                                    <div className="text-gray-500">RR / Tempo</div>
+                                                    <div className="text-purple-400 font-bold">RR {idealPair.tradePlan.riskReward} • {idealPair.tradePlan.horizon}</div>
+                                                </div>
+                                                <div className="bg-gray-950/40 rounded p-2 border border-gray-800">
+                                                    <div className="text-gray-500">SL</div>
+                                                    <div className="text-red-400 font-mono font-bold">{fmtPrice(idealPair.tradePlan.stopLoss)}</div>
+                                                </div>
+                                                <div className="bg-gray-950/40 rounded p-2 border border-gray-800">
+                                                    <div className="text-gray-500">TP</div>
+                                                    <div className="text-green-400 font-mono font-bold">{fmtPrice(idealPair.tradePlan.takeProfit)}</div>
+                                                </div>
+                                                <div className="col-span-2 bg-gray-950/40 rounded p-2 border border-gray-800">
+                                                    <div className="text-gray-500">Execution Window</div>
+                                                    <div className="text-gray-300">{idealPair.tradePlan.executionWindow}</div>
+                                                </div>
+                                            </div>
+                                        )}
                                     </div>
                                 </div>
                             </div>
@@ -264,6 +311,35 @@ export default function CurrencyStrengthView() {
                                                         `${baseCurr?.economicIndicators.sentiment === 'HAWKISH' ? 'BC Hawkish favorece' : 'Momentum positivo'}` :
                                                         `${quoteCurr?.economicIndicators.sentiment === 'DOVISH' ? 'BC Dovish favorece' : 'Momentum negativo'}`}
                                                 </div>
+
+                                                {pair.tradePlan && (
+                                                    <div className="mt-2 pt-2 border-t border-gray-800 grid grid-cols-2 gap-2 text-[10px]">
+                                                        <div>
+                                                            <div className="text-gray-500">Entry</div>
+                                                            <div className="text-cyan-400 font-mono">
+                                                                {fmtPrice(pair.tradePlan.entryZone.from)} - {fmtPrice(pair.tradePlan.entryZone.to)}
+                                                            </div>
+                                                        </div>
+                                                        <div>
+                                                            <div className="text-gray-500">RR / Time</div>
+                                                            <div className="text-purple-400">
+                                                                RR {pair.tradePlan.riskReward} • {pair.tradePlan.horizon}
+                                                            </div>
+                                                        </div>
+                                                        <div>
+                                                            <div className="text-gray-500">SL</div>
+                                                            <div className="text-red-400 font-mono">{fmtPrice(pair.tradePlan.stopLoss)}</div>
+                                                        </div>
+                                                        <div>
+                                                            <div className="text-gray-500">TP</div>
+                                                            <div className="text-green-400 font-mono">{fmtPrice(pair.tradePlan.takeProfit)}</div>
+                                                        </div>
+                                                        <div className="col-span-2">
+                                                            <div className="text-gray-500">Execution Window</div>
+                                                            <div className="text-gray-300">{pair.tradePlan.executionWindow}</div>
+                                                        </div>
+                                                    </div>
+                                                )}
                                             </div>
                                         );
                                     })}
@@ -479,6 +555,35 @@ export default function CurrencyStrengthView() {
                                                 <span className="text-purple-400">Δ{p.differential}</span>
                                             </div>
                                             <div className="h-1.5 bg-gray-800 rounded-full overflow-hidden"><div className="h-full bg-gradient-to-r from-green-500 to-purple-500 rounded-full" style={{ width: `${Math.min(100, p.differential * 2)}%` }} /></div>
+
+                                            {p.tradePlan && (
+                                                <div className="mt-2 pt-2 border-t border-gray-800 grid grid-cols-2 gap-2 text-[10px]">
+                                                    <div>
+                                                        <div className="text-gray-500">Entry</div>
+                                                        <div className="text-cyan-400 font-mono">
+                                                            {fmtPrice(p.tradePlan.entryZone.from)} - {fmtPrice(p.tradePlan.entryZone.to)}
+                                                        </div>
+                                                    </div>
+                                                    <div>
+                                                        <div className="text-gray-500">RR / Time</div>
+                                                        <div className="text-purple-400">
+                                                            RR {p.tradePlan.riskReward} • {p.tradePlan.horizon}
+                                                        </div>
+                                                    </div>
+                                                    <div>
+                                                        <div className="text-gray-500">SL</div>
+                                                        <div className="text-red-400 font-mono">{fmtPrice(p.tradePlan.stopLoss)}</div>
+                                                    </div>
+                                                    <div>
+                                                        <div className="text-gray-500">TP</div>
+                                                        <div className="text-green-400 font-mono">{fmtPrice(p.tradePlan.takeProfit)}</div>
+                                                    </div>
+                                                    <div className="col-span-2">
+                                                        <div className="text-gray-500">Execution Window</div>
+                                                        <div className="text-gray-300">{p.tradePlan.executionWindow}</div>
+                                                    </div>
+                                                </div>
+                                            )}
                                         </div>
                                     ))}
                                 </div>
