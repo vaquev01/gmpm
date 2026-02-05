@@ -118,6 +118,142 @@ const directionColors = {
     BALANCED: 'text-gray-400 bg-gray-500/20 border-gray-500/30',
 };
 
+// Generate actionable conclusion for each asset
+function generateConclusion(data: LiquidityMapData): {
+    action: 'WAIT_LONG' | 'WAIT_SHORT' | 'MONITOR' | 'NO_TRADE';
+    confidence: 'HIGH' | 'MEDIUM' | 'LOW';
+    summary: string;
+    target: string;
+    invalidation: string;
+    timing: string;
+} {
+    const nearestBuy = data.buySideLiquidity[0];
+    const nearestSell = data.sellSideLiquidity[0];
+    const distToBuy = nearestBuy ? ((nearestBuy.level - data.currentPrice) / data.currentPrice * 100) : null;
+    const distToSell = nearestSell ? ((data.currentPrice - nearestSell.level) / data.currentPrice * 100) : null;
+    const sweepProb = data.timing?.probabilityOfSweep || 0;
+    
+    // Determine action based on market direction and liquidity proximity
+    if (data.marketDirection === 'SEEKING_BUYSIDE' && nearestBuy && distToBuy && distToBuy < 2) {
+        return {
+            action: 'WAIT_LONG',
+            confidence: sweepProb >= 60 ? 'HIGH' : sweepProb >= 40 ? 'MEDIUM' : 'LOW',
+            summary: `Mercado buscando liquidez em ${nearestBuy.level.toFixed(data.currentPrice < 10 ? 4 : 2)}. Esperar sweep e reversão para LONG.`,
+            target: `${(nearestBuy.level * 1.005).toFixed(data.currentPrice < 10 ? 4 : 2)} (+0.5%)`,
+            invalidation: `Fechamento acima de ${(nearestBuy.level * 1.01).toFixed(data.currentPrice < 10 ? 4 : 2)}`,
+            timing: data.timing?.nextLikelyWindow || 'Próxima sessão'
+        };
+    }
+    
+    if (data.marketDirection === 'SEEKING_SELLSIDE' && nearestSell && distToSell && distToSell < 2) {
+        return {
+            action: 'WAIT_SHORT',
+            confidence: sweepProb >= 60 ? 'HIGH' : sweepProb >= 40 ? 'MEDIUM' : 'LOW',
+            summary: `Mercado buscando liquidez em ${nearestSell.level.toFixed(data.currentPrice < 10 ? 4 : 2)}. Esperar sweep e reversão para SHORT.`,
+            target: `${(nearestSell.level * 0.995).toFixed(data.currentPrice < 10 ? 4 : 2)} (-0.5%)`,
+            invalidation: `Fechamento abaixo de ${(nearestSell.level * 0.99).toFixed(data.currentPrice < 10 ? 4 : 2)}`,
+            timing: data.timing?.nextLikelyWindow || 'Próxima sessão'
+        };
+    }
+    
+    if (data.marketDirection !== 'BALANCED' && (distToBuy || distToSell)) {
+        return {
+            action: 'MONITOR',
+            confidence: 'MEDIUM',
+            summary: `Liquidez detectada mas distante. Aguardar aproximação do preço às zonas de liquidez.`,
+            target: data.marketDirection === 'SEEKING_BUYSIDE' ? `${nearestBuy?.level.toFixed(2) || 'N/A'}` : `${nearestSell?.level.toFixed(2) || 'N/A'}`,
+            invalidation: 'N/A - Aguardar',
+            timing: '2-4 horas'
+        };
+    }
+    
+    return {
+        action: 'NO_TRADE',
+        confidence: 'LOW',
+        summary: 'Sem liquidez clara detectada. Melhor aguardar formação de novas zonas.',
+        target: 'N/A',
+        invalidation: 'N/A',
+        timing: 'Indefinido'
+    };
+}
+
+// Actionable Insights Panel
+const ActionableInsightsPanel = ({ assets }: { assets: LiquidityMapData[] }) => {
+    const opportunities = assets
+        .map(a => ({ asset: a, conclusion: generateConclusion(a) }))
+        .filter(x => x.conclusion.action !== 'NO_TRADE' && x.conclusion.confidence !== 'LOW')
+        .sort((a, b) => {
+            const confOrder = { HIGH: 0, MEDIUM: 1, LOW: 2 };
+            const actOrder = { WAIT_LONG: 0, WAIT_SHORT: 0, MONITOR: 1, NO_TRADE: 2 };
+            return (confOrder[a.conclusion.confidence] - confOrder[b.conclusion.confidence]) ||
+                   (actOrder[a.conclusion.action] - actOrder[b.conclusion.action]);
+        })
+        .slice(0, 8);
+
+    if (opportunities.length === 0) return null;
+
+    return (
+        <Card className="bg-gradient-to-r from-gray-900 via-purple-900/20 to-gray-900 border-purple-500/30">
+            <CardHeader className="py-3 px-4 border-b border-purple-500/20">
+                <CardTitle className="text-sm font-bold text-purple-300 uppercase flex items-center gap-2">
+                    <Target className="w-4 h-4" />
+                    🎯 CONCLUSÕES & AÇÕES - O Que Fazer Agora
+                </CardTitle>
+            </CardHeader>
+            <CardContent className="p-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
+                    {opportunities.map(({ asset, conclusion }) => (
+                        <div key={asset.symbol} className={cn(
+                            "rounded-lg p-3 border",
+                            conclusion.action === 'WAIT_LONG' ? "bg-green-950/30 border-green-500/30" :
+                            conclusion.action === 'WAIT_SHORT' ? "bg-red-950/30 border-red-500/30" :
+                            "bg-gray-900/50 border-gray-700"
+                        )}>
+                            <div className="flex items-center justify-between mb-2">
+                                <span className="font-bold text-white">{asset.displaySymbol}</span>
+                                <Badge className={cn(
+                                    "text-[9px]",
+                                    conclusion.action === 'WAIT_LONG' ? "bg-green-500/20 text-green-400" :
+                                    conclusion.action === 'WAIT_SHORT' ? "bg-red-500/20 text-red-400" :
+                                    "bg-yellow-500/20 text-yellow-400"
+                                )}>
+                                    {conclusion.action === 'WAIT_LONG' ? '⏳ ESPERAR LONG' :
+                                     conclusion.action === 'WAIT_SHORT' ? '⏳ ESPERAR SHORT' :
+                                     '👀 MONITORAR'}
+                                </Badge>
+                            </div>
+                            <div className="text-[10px] text-gray-300 mb-2">{conclusion.summary}</div>
+                            <div className="space-y-1 text-[9px]">
+                                <div className="flex justify-between">
+                                    <span className="text-gray-500">Confiança:</span>
+                                    <span className={cn(
+                                        conclusion.confidence === 'HIGH' ? "text-green-400" :
+                                        conclusion.confidence === 'MEDIUM' ? "text-yellow-400" : "text-gray-400"
+                                    )}>{conclusion.confidence}</span>
+                                </div>
+                                <div className="flex justify-between">
+                                    <span className="text-gray-500">Target:</span>
+                                    <span className="text-cyan-400 font-mono">{conclusion.target}</span>
+                                </div>
+                                <div className="flex justify-between">
+                                    <span className="text-gray-500">Timing:</span>
+                                    <span className="text-purple-400">{conclusion.timing}</span>
+                                </div>
+                            </div>
+                        </div>
+                    ))}
+                </div>
+                <div className="mt-3 p-2 bg-gray-950/50 rounded border border-gray-800">
+                    <div className="text-[10px] text-gray-400 text-center">
+                        💡 <span className="text-yellow-400">ESPERAR LONG/SHORT</span> = Aguardar sweep da liquidez e entrada após confirmação | 
+                        <span className="text-cyan-400"> MONITORAR</span> = Acompanhar aproximação do preço
+                    </div>
+                </div>
+            </CardContent>
+        </Card>
+    );
+};
+
 const directionIcons = {
     SEEKING_BUYSIDE: ArrowUp,
     SEEKING_SELLSIDE: ArrowDown,
@@ -547,6 +683,9 @@ export const LiquidityHeatmap = () => {
                     </div>
                 </CardContent>
             </Card>
+
+            {/* Actionable Insights - O que fazer com as informações */}
+            <ActionableInsightsPanel assets={data.all} />
 
             {/* Tabs */}
             <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as AssetClassKey)}>
