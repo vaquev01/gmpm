@@ -154,7 +154,7 @@ function SMCPanel({ smc, levels }: { smc: TechnicalAnalysis['smc']; levels: Tech
           <div className="text-white/25 mb-1">Order Blocks</div>
           {smc.orderBlocks.length > 0 ? smc.orderBlocks.map((ob, i) => (
             <div key={i} className={`font-mono ${ob.type === 'BULLISH' ? 'text-emerald-400' : 'text-red-400'}`}>
-              {ob.type}: {fmt(ob.low)}-{fmt(ob.high)}
+              {ob.type}: {priceFmt(ob.low)}-{priceFmt(ob.high)}
             </div>
           )) : <div className="text-white/15">None nearby</div>}
         </div>
@@ -162,7 +162,7 @@ function SMCPanel({ smc, levels }: { smc: TechnicalAnalysis['smc']; levels: Tech
           <div className="text-white/25 mb-1">FVGs</div>
           {smc.fvgs.length > 0 ? smc.fvgs.map((fvg, i) => (
             <div key={i} className={`font-mono ${fvg.type === 'BULLISH' ? 'text-emerald-400' : 'text-red-400'}`}>
-              {fvg.type}: {fmt(fvg.low)}-{fmt(fvg.high)}
+              {fvg.type}: {priceFmt(fvg.low)}-{priceFmt(fvg.high)}
             </div>
           )) : <div className="text-white/15">None unfilled</div>}
         </div>
@@ -171,11 +171,11 @@ function SMCPanel({ smc, levels }: { smc: TechnicalAnalysis['smc']; levels: Tech
       <div className="grid grid-cols-2 gap-3 text-[11px] border-t border-white/5 pt-2">
         <div>
           <div className="text-white/25 mb-1">Resistance</div>
-          {levels.resistance.map((r, i) => <div key={i} className="font-mono text-red-400">R{i+1}: {fmt(r)}</div>)}
+          {levels.resistance.map((r, i) => <div key={i} className="font-mono text-red-400">R{i+1}: {priceFmt(r)}</div>)}
         </div>
         <div>
           <div className="text-white/25 mb-1">Support</div>
-          {levels.support.map((s, i) => <div key={i} className="font-mono text-emerald-400">S{i+1}: {fmt(s)}</div>)}
+          {levels.support.map((s, i) => <div key={i} className="font-mono text-emerald-400">S{i+1}: {priceFmt(s)}</div>)}
         </div>
       </div>
 
@@ -184,7 +184,7 @@ function SMCPanel({ smc, levels }: { smc: TechnicalAnalysis['smc']; levels: Tech
         <div className="grid grid-cols-2 gap-2">
           {smc.liquidityPools.map((lp, i) => (
             <div key={i} className={`font-mono ${lp.type === 'BUY_SIDE' ? 'text-emerald-400' : 'text-red-400'}`}>
-              {lp.type}: {fmt(lp.level)} ({lp.strength})
+              {lp.type}: {priceFmt(lp.level)} ({lp.strength})
             </div>
           ))}
         </div>
@@ -192,7 +192,7 @@ function SMCPanel({ smc, levels }: { smc: TechnicalAnalysis['smc']; levels: Tech
 
       <div className="flex items-center justify-between text-[11px] border-t border-white/5 pt-2">
         <span className="text-white/25">Pivot</span>
-        <span className="font-mono font-bold">{fmt(levels.pivot)}</span>
+        <span className="font-mono font-bold">{priceFmt(levels.pivot)}</span>
       </div>
       <div className="flex items-center justify-between text-[11px]">
         <span className="text-white/25">ATR</span>
