@@ -2,6 +2,11 @@ import { NextResponse } from 'next/server';
 import { serverLog } from '@/lib/serverLogs';
 import { calculateKelly, RISK_PARAMS_EXPORT } from '@/lib/riskManager';
 
+// Response-level cache (2 min) + in-flight dedup — micro takes ~37s to build
+const _microCache = new Map<string, { ts: number; payload: Record<string, unknown> }>();
+let _microInFlight: Promise<Response> | null = null;
+const MICRO_RESPONSE_TTL = 2 * 60_000;
+
 // Types
 interface MesoInput {
     symbol: string;
@@ -1269,11 +1274,27 @@ function generateRecommendation(setups: Setup[], technical?: TechnicalAnalysis):
 }
 
 export async function GET(request: Request) {
-    try {
-        const { searchParams } = new URL(request.url);
-        const symbolOverride = searchParams.get('symbol');
-        const directionOverride = searchParams.get('direction');
+    const { searchParams } = new URL(request.url);
+    const symbolOverride = searchParams.get('symbol');
+    const directionOverride = searchParams.get('direction');
 
+    // Full-universe requests: use cache + in-flight dedup (takes ~37s to build)
+    if (!symbolOverride) {
+        const cached = _microCache.get('full');
+        if (cached && (Date.now() - cached.ts) < MICRO_RESPONSE_TTL) {
+            return NextResponse.json({ ...cached.payload, cached: true });
+        }
+        if (_microInFlight) return _microInFlight;
+        _microInFlight = buildMicroResponse(null, directionOverride);
+        try { return await _microInFlight; } finally { _microInFlight = null; }
+    }
+
+    // Single-symbol requests: no cache (fast enough)
+    return buildMicroResponse(symbolOverride, directionOverride);
+}
+
+async function buildMicroResponse(symbolOverride: string | null, directionOverride: string | null): Promise<Response> {
+    try {
         // 1. Fetch MESO inputs with full context
         const mesoData = await fetchMesoInputs();
         const { instruments, prohibited, context } = mesoData;
@@ -1417,10 +1438,19 @@ export async function GET(request: Request) {
         const mtfBySymbol = new Map<string, MTFSnapshot | null>();
         const mtfSnapshots = await mapWithConcurrency(
             realInstruments,
-            4,
+            8,
             async (i: MesoInput) => ({ symbol: i.symbol, mtf: await fetchMTFSnapshot(i.symbol) })
         );
         for (const s of mtfSnapshots) mtfBySymbol.set(s.symbol, s.mtf);
+
+        // Pre-fetch liquidity analyses in parallel (was sequential per-symbol — major bottleneck)
+        const liqBySymbol = new Map<string, LiquidityAnalysis | null>();
+        const liqResults = await mapWithConcurrency(
+            realInstruments.filter((i: MesoInput) => !prohibited.includes(i.symbol)),
+            6,
+            async (i: MesoInput) => ({ symbol: i.symbol, liq: await fetchLiquidityAnalysis(i.symbol) })
+        );
+        for (const r of liqResults) liqBySymbol.set(r.symbol, r.liq);
         
         for (const input of realInstruments) {
             // Check if symbol is prohibited
@@ -1485,8 +1515,8 @@ export async function GET(request: Request) {
                 };
             }
 
-            // Fetch liquidity analysis for enhanced insights
-            const liquidityAnalysis = await fetchLiquidityAnalysis(input.symbol);
+            // Use pre-fetched liquidity analysis
+            const liquidityAnalysis = liqBySymbol.get(input.symbol) || null;
             
             // Enhance setup with liquidity-based targets if available
             if (setup && liquidityAnalysis && liquidityAnalysis.priceTargets.primaryTarget > 0) {
@@ -1611,7 +1641,7 @@ export async function GET(request: Request) {
         const executeReady = finalAnalyses.filter(a => a.recommendation.action === 'EXECUTE').length;
         const withSetups = finalAnalyses.filter(a => a.setups.length > 0).length;
 
-        return NextResponse.json({
+        const payload: Record<string, unknown> = {
             success: true,
             timestamp: new Date().toISOString(),
             analyses: finalAnalyses,
@@ -1630,7 +1660,14 @@ export async function GET(request: Request) {
             },
             prohibited,
             mesoInstruments: realInstruments.slice(0, 10),
-        });
+        };
+
+        // Cache full-universe response
+        if (!symbolOverride) {
+            _microCache.set('full', { ts: Date.now(), payload });
+        }
+
+        return NextResponse.json(payload);
     } catch (error) {
         serverLog('error', 'micro_api_error', { error: String(error) }, 'api/micro');
         return NextResponse.json({

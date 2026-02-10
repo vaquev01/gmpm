@@ -8,83 +8,43 @@ import {
     calculateInstitutionalPositionSize,
     type InstitutionalRiskReport,
 } from '@/lib/riskManager';
+import {
+    getRealTradesForRisk,
+    getRealEquityCurve,
+    getActiveSignals as getActiveServerSignals,
+    getOutcomeStats,
+} from '@/lib/serverStore';
 
 // Cache for risk report
 let cachedReport: InstitutionalRiskReport | null = null;
 let cacheTimestamp = 0;
 const CACHE_TTL_MS = 30_000; // 30 seconds
 
-// Simulated historical data (in production, fetch from database)
-function getSimulatedTrades(): { pnl: number; risk: number; date: string }[] {
-    // Generate realistic trade history based on typical system performance
-    const trades: { pnl: number; risk: number; date: string }[] = [];
-    const baseDate = new Date();
-    baseDate.setDate(baseDate.getDate() - 90); // 90 days history
-    
-    // Simulate ~60 trades over 90 days
-    for (let i = 0; i < 60; i++) {
-        const dayOffset = Math.floor(Math.random() * 90);
-        const date = new Date(baseDate);
-        date.setDate(date.getDate() + dayOffset);
-        
-        const risk = 1 + Math.random() * 1; // 1-2% risk per trade
-        const isWin = Math.random() < 0.58; // 58% win rate
-        
-        let pnl: number;
-        if (isWin) {
-            // Win: 1.2-2.5R
-            pnl = risk * (1.2 + Math.random() * 1.3);
-        } else {
-            // Loss: -0.8 to -1.0R (some with partial stops)
-            pnl = -risk * (0.8 + Math.random() * 0.2);
-        }
-        
-        trades.push({
-            pnl,
-            risk,
-            date: date.toISOString(),
-        });
-    }
-    
-    return trades.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+// Get real trades from persistent store, with conservative fallback for empty history
+function getTrades(): { pnl: number; risk: number; date: string }[] {
+    const real = getRealTradesForRisk();
+    if (real.length >= 5) return real;
+    // Fallback: return conservative defaults when not enough data
+    return [{ pnl: 0, risk: 1.5, date: new Date().toISOString() }];
 }
 
-function getSimulatedEquityCurve(): { date: string; equity: number }[] {
-    const trades = getSimulatedTrades();
-    const curve: { date: string; equity: number }[] = [];
-    let equity = 100000;
-    
-    const startDate = new Date();
-    startDate.setDate(startDate.getDate() - 90);
-    
-    // Daily equity curve
-    for (let day = 0; day <= 90; day++) {
-        const currentDate = new Date(startDate);
-        currentDate.setDate(currentDate.getDate() + day);
-        const dateStr = currentDate.toISOString().split('T')[0];
-        
-        // Find trades on this day
-        const dayTrades = trades.filter(t => t.date.startsWith(dateStr));
-        for (const trade of dayTrades) {
-            equity += (trade.pnl / 100) * equity;
-        }
-        
-        curve.push({
-            date: currentDate.toISOString(),
-            equity: Math.round(equity * 100) / 100,
-        });
-    }
-    
-    return curve;
-}
-
-function getSimulatedPositions(): { symbol: string; risk: number; correlation: number }[] {
-    // In production, fetch from portfolio manager
+function getEquityCurve(): { date: string; equity: number }[] {
+    const real = getRealEquityCurve();
+    if (real.length >= 2) return real;
+    // Fallback: flat equity curve
     return [
-        { symbol: 'META', risk: 1.5, correlation: 0.85 },
-        { symbol: 'GOOGL', risk: 1.2, correlation: 0.82 },
-        { symbol: 'GC=F', risk: 0.8, correlation: -0.25 },
+        { date: new Date(Date.now() - 86400000).toISOString(), equity: 100000 },
+        { date: new Date().toISOString(), equity: 100000 },
     ];
+}
+
+function getPositionsFromActiveSignals(): { symbol: string; risk: number; correlation: number }[] {
+    const active = getActiveServerSignals();
+    return active.map(s => ({
+        symbol: s.asset,
+        risk: s.components?.riskPercent ?? 1.5,
+        correlation: 0.5, // Conservative default; real correlation engine can be added later
+    }));
 }
 
 async function fetchVix(): Promise<number | undefined> {
@@ -104,18 +64,22 @@ export async function GET() {
     
     // Return cached if fresh
     if (cachedReport && (now - cacheTimestamp) < CACHE_TTL_MS) {
+        const trades = getTrades();
         return NextResponse.json({
             success: true,
             cached: true,
             cacheAge: now - cacheTimestamp,
+            dataSource: trades.length > 1 ? 'REAL' : 'INSUFFICIENT_DATA',
             report: cachedReport,
         });
     }
     
     try {
-        const trades = getSimulatedTrades();
-        const equityCurve = getSimulatedEquityCurve();
-        const positions = getSimulatedPositions();
+        const trades = getTrades();
+        const equityCurve = getEquityCurve();
+        const positions = getPositionsFromActiveSignals();
+        const stats = getOutcomeStats();
+        const hasRealData = trades.length > 1;
         const vix = await fetchVix();
         
         // Calculate daily/weekly P&L from equity curve
@@ -165,6 +129,8 @@ export async function GET() {
         return NextResponse.json({
             success: true,
             cached: false,
+            dataSource: hasRealData ? 'REAL' : 'INSUFFICIENT_DATA',
+            outcomeStats: stats,
             report,
         });
     } catch (error) {
@@ -199,8 +165,8 @@ export async function POST(request: Request) {
         }
         
         // Get current state
-        const equityCurve = getSimulatedEquityCurve();
-        const positions = getSimulatedPositions();
+        const equityCurve = getEquityCurve();
+        const positions = getPositionsFromActiveSignals();
         const drawdownState = calculateDrawdownState(equityCurve);
         
         // Calculate institutional position size
@@ -218,7 +184,7 @@ export async function POST(request: Request) {
         
         // Also calculate Kelly for reference
         const kelly = calculateKellyFromTrades(
-            getSimulatedTrades(),
+            getTrades(),
             modelConfidence as 'HIGH' | 'MEDIUM' | 'LOW'
         );
         
