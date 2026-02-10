@@ -1,5 +1,5 @@
 import { Shell } from '../components/layout/Shell';
-import { ErrorBoundary } from '../components/layout/ErrorBoundary';
+import { ErrorBoundaryWithClient as ErrorBoundary } from '../components/layout/ErrorBoundary';
 import { useTerminal, type ViewId } from '../store/useTerminal';
 import { ExecutiveDashboardView } from '../components/views/ExecutiveDashboardView';
 import { MacroView } from '../components/views/MacroView';

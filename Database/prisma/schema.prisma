@@ -1,0 +1,131 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum PortfolioStatus {
+  ACTIVE
+  CLOSED
+}
+
+enum AssetSide {
+  LONG
+  SHORT
+}
+
+enum SignalStatus {
+  ACTIVE
+  HIT_TP1
+  HIT_TP2
+  HIT_TP3
+  HIT_SL
+  EXPIRED
+  CANCELLED
+}
+
+enum ServerLogLevel {
+  debug
+  info
+  warn
+  error
+}
+
+model Portfolio {
+  id          String          @id @default(uuid())
+  name        String
+  status      PortfolioStatus @default(ACTIVE)
+  capital     Float
+  leverage    Float
+  defaultLots Float
+
+  assets      TrackedAsset[]
+
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  @@index([status])
+}
+
+model TrackedAsset {
+  id             String     @id @default(uuid())
+  portfolioId    String
+  portfolio      Portfolio  @relation(fields: [portfolioId], references: [id], onDelete: Cascade)
+
+  symbol         String
+  entryPrice     Float
+  side           AssetSide
+  lots           Float
+
+  scanScore      Int?
+  finalScore     Int?
+  stopLoss       Float?
+  takeProfit1    Float?
+  takeProfit2    Float?
+  riskReward     Float?
+  technicalScore Int?
+
+  scenarioStatus String?
+  entryQuality   String?
+  riskProfile    String?
+
+  confluences    String[]
+  thesis         String?
+  mesoReason     String?
+
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+
+  @@index([portfolioId])
+  @@index([symbol])
+}
+
+model Signal {
+  id                 String        @id @default(uuid())
+  asset              String
+  assetClass         String
+  direction          AssetSide
+
+  price              Float
+  stopLoss           Float
+  takeProfits        Json
+
+  score              Int
+  components         Json
+  enhancedComponents Json?
+
+  regime             String
+  regimeType         String?
+
+  gates              Json?
+  gatesAllPass       Boolean?
+
+  validityHours      Int
+
+  status             SignalStatus  @default(ACTIVE)
+  currentPrice       Float?
+  currentPnL         Float?
+
+  createdAt          DateTime      @default(now())
+  expiresAt          DateTime
+  closedAt           DateTime?
+
+  @@index([asset])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model ServerLog {
+  id      String         @id @default(uuid())
+  ts      BigInt
+  level   ServerLogLevel
+  message String
+  details String?
+  source  String?
+
+  @@index([level])
+  @@index([ts])
+}

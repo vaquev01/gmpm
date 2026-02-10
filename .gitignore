@@ -11,6 +11,13 @@ __pycache__/
 *$py.class
 venv/
 .env
+.env.*
+.envrc
+.envrc.*
+**/.env
+**/.env.*
+!.env.example
+!**/.env.example
 .venv/
 
 # Mac

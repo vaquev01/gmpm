@@ -1,7 +1,7 @@
 import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
 import { Card, Badge, Metric, Spinner, ErrorBox, ProgressBar, TabBar, fmt, pctFmt, trendBadgeVariant, cleanSymbol } from '../ui/primitives';
 import { useTerminal } from '../../store/useTerminal';
+import { useMeso } from '../../hooks/useApi';
 
 // --- TYPES (matching legacy MesoView) ---
 interface ClassAnalysis {
@@ -77,13 +77,6 @@ interface MesoData {
   };
 }
 
-function useMeso() {
-  return useQuery<MesoData>({
-    queryKey: ['meso'],
-    queryFn: () => fetch('/api/meso').then(r => r.json()),
-    staleTime: 30_000, refetchInterval: 60_000,
-  });
-}
 
 const expectationVariant = (e: string): 'bullish' | 'bearish' | 'neutral' | 'warning' => {
   if (e === 'BULLISH') return 'bullish';

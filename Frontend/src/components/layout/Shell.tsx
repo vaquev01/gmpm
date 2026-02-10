@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useTerminal, type ViewId } from '../../store/useTerminal';
+import { useHealth } from '../../hooks/useApi';
 
 const NAV_GROUPS = [
   {
@@ -54,6 +55,9 @@ function LiveClock() {
 export function Shell({ children }: { children: React.ReactNode }) {
   const { view, setView } = useTerminal();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const health = useHealth();
+  const isOnline = health.data?.ok === true;
+  const isChecking = health.isLoading;
 
   const handleNav = (id: ViewId) => {
     setView(id);
@@ -97,9 +101,21 @@ export function Shell({ children }: { children: React.ReactNode }) {
         </nav>
 
         <div className="flex items-center gap-3">
-          <div className="flex items-center gap-2 bg-emerald-950/40 border border-emerald-900/50 px-3 py-1 rounded-full">
-            <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-            <span className="text-emerald-400 text-[10px] font-bold tracking-wider">ONLINE</span>
+          <div className={`flex items-center gap-2 px-3 py-1 rounded-full border ${
+            isChecking ? 'bg-amber-950/40 border-amber-900/50' :
+            isOnline ? 'bg-emerald-950/40 border-emerald-900/50' :
+            'bg-red-950/40 border-red-900/50'
+          }`}>
+            <div className={`w-2 h-2 rounded-full ${
+              isChecking ? 'bg-amber-500 animate-pulse' :
+              isOnline ? 'bg-emerald-500 animate-pulse' :
+              'bg-red-500'
+            }`} />
+            <span className={`text-[10px] font-bold tracking-wider ${
+              isChecking ? 'text-amber-400' :
+              isOnline ? 'text-emerald-400' :
+              'text-red-400'
+            }`}>{isChecking ? 'CHECKING' : isOnline ? 'ONLINE' : 'OFFLINE'}</span>
           </div>
           <LiveClock />
           <button

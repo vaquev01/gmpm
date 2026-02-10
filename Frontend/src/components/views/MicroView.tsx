@@ -1,7 +1,7 @@
 import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
 import { Card, Badge, Spinner, ErrorBox, ProgressBar, TabBar, fmt, priceFmt, cleanSymbol } from '../ui/primitives';
 import { useTerminal } from '../../store/useTerminal';
+import { useMicro, useMeso } from '../../hooks/useApi';
 
 // --- TYPES (matching legacy MicroView) ---
 interface Setup {
@@ -40,23 +40,6 @@ interface MicroData {
   success: boolean; timestamp: string;
   analyses: MicroAnalysis[];
   summary: { total: number; withSetups: number; executeReady: number; message: string };
-}
-
-function useMicro() {
-  return useQuery<MicroData>({
-    queryKey: ['micro'],
-    queryFn: async () => {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 60_000);
-      try {
-        const r = await fetch('/api/micro', { signal: controller.signal });
-        return await r.json();
-      } finally {
-        clearTimeout(timeout);
-      }
-    },
-    staleTime: 60_000, refetchInterval: 120_000, retry: 1,
-  });
 }
 
 const trendColor = (t: string) => t === 'BULLISH' ? 'text-emerald-400 bg-emerald-500/15' : t === 'BEARISH' ? 'text-red-400 bg-red-500/15' : 'text-white/40 bg-white/5';
@@ -316,10 +299,7 @@ function AnalysisCard({ analysis }: { analysis: MicroAnalysis }) {
 
 function MicroFallback() {
   // When /api/micro fails, show a simplified view from /api/meso allowed instruments
-  const { data: meso, isLoading } = useQuery<{
-    success: boolean;
-    microInputs?: { allowedInstruments: { symbol: string; direction: 'LONG' | 'SHORT'; class: string; reason: string; score: number }[] };
-  }>({ queryKey: ['meso'], queryFn: () => fetch('/api/meso').then(r => r.json()), staleTime: 30_000 });
+  const { data: meso, isLoading } = useMeso();
 
   if (isLoading) return <Spinner />;
   const instruments = meso?.microInputs?.allowedInstruments || [];
@@ -363,7 +343,7 @@ function MicroFallback() {
 }
 
 export function MicroView() {
-  const { data, isLoading, isError, refetch, failureCount } = useMicro();
+  const { data, isLoading, isError, refetch } = useMicro();
   const { setView } = useTerminal();
 
   if (isLoading) {

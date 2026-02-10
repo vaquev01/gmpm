@@ -1,0 +1,21 @@
+{
+  "name": "gmpm-monorepo",
+  "private": true,
+  "workspaces": [
+    "Frontend",
+    "Backend",
+    "Database"
+  ],
+  "scripts": {
+    "dev": "concurrently -n db,backend,frontend \"npm run dev:db\" \"npm run dev:backend\" \"npm run dev:frontend\"",
+    "dev:db": "docker compose up -d db",
+    "dev:backend": "npm --workspace Backend run dev",
+    "dev:frontend": "npm --workspace Frontend run dev",
+    "prisma:generate": "npm --workspace Database run prisma:generate",
+    "prisma:migrate": "npm --workspace Database run prisma:migrate",
+    "prisma:seed": "npm --workspace Database run prisma:seed"
+  },
+  "devDependencies": {
+    "concurrently": "^9.0.0"
+  }
+}

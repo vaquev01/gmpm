@@ -1,8 +1,10 @@
 import React from 'react';
+import { QueryClient, useQueryClient } from '@tanstack/react-query';
 
 interface Props {
   children: React.ReactNode;
   fallbackLabel?: string;
+  queryClient?: QueryClient;
 }
 
 interface State {
@@ -24,6 +26,11 @@ export class ErrorBoundary extends React.Component<Props, State> {
     console.error(`[ErrorBoundary] ${this.props.fallbackLabel || 'View'} crashed:`, error, info.componentStack);
   }
 
+  handleRetry = () => {
+    this.props.queryClient?.invalidateQueries();
+    this.setState({ hasError: false, error: null });
+  };
+
   render() {
     if (this.state.hasError) {
       return (
@@ -36,7 +43,7 @@ export class ErrorBoundary extends React.Component<Props, State> {
           </div>
           <p className="text-[11px] text-white/30 font-mono">{this.state.error?.message}</p>
           <button
-            onClick={() => this.setState({ hasError: false, error: null })}
+            onClick={this.handleRetry}
             className="text-xs text-red-300 hover:text-red-200 underline"
           >
             Try again
@@ -46,4 +53,9 @@ export class ErrorBoundary extends React.Component<Props, State> {
     }
     return this.props.children;
   }
+}
+
+export function ErrorBoundaryWithClient(props: Omit<Props, 'queryClient'>) {
+  const queryClient = useQueryClient();
+  return <ErrorBoundary {...props} queryClient={queryClient} />;
 }

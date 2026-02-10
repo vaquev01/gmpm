@@ -1,35 +1,6 @@
-import { useQuery } from '@tanstack/react-query';
 import { Card, Badge, Metric, Spinner, StatusDot, ProgressBar, fmt, pctFmt, pctColor, priceFmt, trendBadgeVariant } from '../ui/primitives';
 import { useTerminal } from '../../store/useTerminal';
-
-function useHealth() {
-  return useQuery<{ ok: boolean; ts: number }>({ queryKey: ['health'], queryFn: () => fetch('/api/health').then(r => r.json()), refetchInterval: 10_000 });
-}
-function useTest() {
-  return useQuery<{ success: boolean; summary: { total: number; passed: number; failed: number; percentage: number }; tests: { name: string; passed: boolean }[] }>({
-    queryKey: ['test'], queryFn: () => fetch('/api/test').then(r => r.json()), staleTime: 300_000,
-  });
-}
-function useMacro() {
-  return useQuery<{ success: boolean; macro?: { vix: number; vixChange: number; treasury10y: number; treasury2y: number; yieldCurve: number; dollarIndex: number; dollarIndexChange: number; fearGreed: { value: number; classification: string } | null } }>({
-    queryKey: ['macro'], queryFn: () => fetch('/api/macro').then(r => r.json()), staleTime: 30_000, refetchInterval: 60_000,
-  });
-}
-function useRegime() {
-  return useQuery<{ success: boolean; snapshot?: { regime: string; regimeConfidence: string; axes: Record<string, { axis?: string; name?: string; score: number; direction: string; confidence: string }>; timestamp: string } }>({
-    queryKey: ['regime'], queryFn: () => fetch('/api/regime').then(r => r.json()), staleTime: 15_000, refetchInterval: 30_000,
-  });
-}
-function useMarket() {
-  return useQuery<{ success: boolean; count: number; degraded: boolean; assets?: { symbol: string; displaySymbol?: string; name: string; price: number; changePercent: number; assetClass: string }[] }>({
-    queryKey: ['market'], queryFn: () => fetch('/api/market').then(r => r.json()), staleTime: 30_000, refetchInterval: 60_000,
-  });
-}
-function useFred() {
-  return useQuery<{ success: boolean; summary?: { gdp: { trend: string }; inflation: { cpiYoY: number | null; trend: string }; employment: { unemploymentRate: number | null; trend: string }; rates: { fedFunds: number | null; yieldCurve: number | null; curveStatus: string }; credit: { hySpread: number | null; condition: string }; sentiment: { consumerSentiment: number | null; condition: string } } }>({
-    queryKey: ['fred'], queryFn: () => fetch('/api/fred').then(r => r.json()), staleTime: 120_000, refetchInterval: 300_000,
-  });
-}
+import { useHealth, useTest, useMacro, useRegime, useMarket, useFred } from '../../hooks/useApi';
 
 function regimeColor(r: string) {
   if (r === 'GOLDILOCKS' || r === 'REFLATION') return 'text-emerald-400';

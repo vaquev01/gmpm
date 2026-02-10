@@ -1,51 +1,11 @@
 import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
 import { Card, Badge, Metric, Spinner, ErrorBox, ProgressBar, TabBar, fmt, trendBadgeVariant } from '../ui/primitives';
 import { useTerminal } from '../../store/useTerminal';
+import { useFred, useMacro, useRegime, type MacroData, type FredData, type FredSeries, type RegimeData } from '../../hooks/useApi';
 
-interface FredSummary {
-  gdp: { value: number | null; trend: string; lastUpdate?: string };
-  inflation: { cpi: number | null; cpiYoY: number | null; coreCpi?: number | null; pce?: number | null; trend: string };
-  employment: { unemploymentRate: number | null; nfp: number | null; initialClaims?: number | null; trend: string };
-  rates: { fedFunds: number | null; treasury10y: number | null; treasury2y: number | null; yieldCurve: number | null; curveStatus: string };
-  credit: { aaaSpread: number | null; hySpread: number | null; condition: string };
-  sentiment: { consumerSentiment: number | null; condition: string };
-}
-
-interface FredSeries { seriesId: string; name: string; value: number; date: string; unit: string }
-
-interface FredResponse {
-  success: boolean; timestamp?: string;
-  data?: Record<string, FredSeries>;
-  summary?: FredSummary;
-}
-
-interface MacroResponse {
-  success: boolean; timestamp?: string;
-  macro?: {
-    vix: number; vixChange: number; treasury10y: number; treasury2y: number; treasury30y: number;
-    yieldCurve: number; dollarIndex: number; dollarIndexChange: number;
-    fearGreed: { value: number; classification: string } | null;
-  };
-}
-
-interface RegimeAxis { axis?: string; name?: string; score: number; direction: string; confidence: string; reasons?: string[] }
-interface RegimeResponse {
-  success: boolean;
-  snapshot?: {
-    regime: string; regimeConfidence: string; axes: Record<string, RegimeAxis>; timestamp: string;
-  };
-}
-
-function useFred() {
-  return useQuery<FredResponse>({ queryKey: ['fred'], queryFn: () => fetch('/api/fred').then(r => r.json()), staleTime: 120_000, refetchInterval: 300_000 });
-}
-function useMacro() {
-  return useQuery<MacroResponse>({ queryKey: ['macro'], queryFn: () => fetch('/api/macro').then(r => r.json()), staleTime: 30_000, refetchInterval: 60_000 });
-}
-function useRegime() {
-  return useQuery<RegimeResponse>({ queryKey: ['regime'], queryFn: () => fetch('/api/regime').then(r => r.json()), staleTime: 15_000, refetchInterval: 30_000 });
-}
+type MacroResponse = MacroData;
+type FredSummary = NonNullable<FredData['summary']>;
+type RegimeResponse = RegimeData;
 
 function regimeColor(r: string) {
   if (r === 'GOLDILOCKS' || r === 'REFLATION') return 'text-emerald-400';

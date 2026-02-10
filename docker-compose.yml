@@ -1,0 +1,21 @@
+services:
+  db:
+    image: postgres:16
+    container_name: gmpm-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: gmpm
+      POSTGRES_PASSWORD: gmpm
+      POSTGRES_DB: gmpm
+    ports:
+      - "5433:5432"
+    volumes:
+      - gmpm_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gmpm -d gmpm"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  gmpm_pg_data:

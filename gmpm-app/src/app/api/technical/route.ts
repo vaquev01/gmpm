@@ -232,12 +232,11 @@ function calculateBollinger(closes: number[], period: number = 20, stdDev: numbe
 async function fetchHistoricalData(symbol: string): Promise<HistoricalQuote[]> {
     try {
         // Yahoo Finance Charts API (gratuito, sem autenticação)
-        const period1 = Math.floor((Date.now() - 90 * 24 * 60 * 60 * 1000) / 1000); // 90 dias atrás
+        const period1 = Math.floor((Date.now() - 365 * 24 * 60 * 60 * 1000) / 1000);
         const period2 = Math.floor(Date.now() / 1000);
-
         const url = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?period1=${period1}&period2=${period2}&interval=1d`;
 
-        const y = await yahooFetchJson(url, 300_000);
+        const y = await yahooFetchJson(url, 300_000, 12_000, 2500);
         if (!y.ok || !y.data) {
             serverLog('warn', 'technical_yahoo_fetch_failed', { symbol, status: y.status, cached: y.cached, stale: y.stale }, 'api/technical');
             return [];

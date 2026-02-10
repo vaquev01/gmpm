@@ -265,7 +265,10 @@ export function IncubatorView() {
 
   return (
     <div className="space-y-5">
-      <h2 className="text-xl font-black tracking-tight">Strategy Incubator & P&L</h2>
+      <div className="flex items-center gap-3">
+        <h2 className="text-xl font-black tracking-tight">Strategy Incubator & P&L</h2>
+        <Badge text="SIMULATED" variant="warning" />
+      </div>
 
       <GlobalStats stats={data.globalStats} />
 

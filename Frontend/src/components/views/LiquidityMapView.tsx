@@ -1,7 +1,7 @@
 import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
 import { Card, Badge, Spinner, ErrorBox, ProgressBar, TabBar, fmt, priceFmt, cleanSymbol } from '../ui/primitives';
 import { useTerminal } from '../../store/useTerminal';
+import { useLiquidityMap } from '../../hooks/useApi';
 
 // --- TYPES ---
 interface EqualLevel {
@@ -60,22 +60,6 @@ interface LiquidityMapResponse {
 
 type AssetClassKey = 'all' | 'forex' | 'etf' | 'crypto' | 'commodity' | 'index';
 
-function useLiquidityMap() {
-  return useQuery<LiquidityMapResponse>({
-    queryKey: ['liquidity-map'],
-    queryFn: async () => {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 60_000);
-      try {
-        const r = await fetch('/api/liquidity-map', { signal: controller.signal });
-        return await r.json();
-      } finally {
-        clearTimeout(timeout);
-      }
-    },
-    staleTime: 60_000, refetchInterval: 120_000, retry: 1,
-  });
-}
 
 const dirColor = (d: string) => {
   if (d.includes('BUYSIDE') || d === 'BULLISH') return 'text-emerald-400';

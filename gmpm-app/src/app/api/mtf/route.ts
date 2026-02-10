@@ -99,7 +99,7 @@ async function fetchCandles(symbol: string, interval: string, range: string): Pr
     try {
         const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=${interval}&range=${range}`;
         const ttlMs = interval === '1d' ? 60_000 : 30_000;
-        const y = await yahooFetchJson(url, ttlMs);
+        const y = await yahooFetchJson(url, ttlMs, 12_000, 2500);
         if (!y.ok || !y.data) {
             if (y.status) {
                 serverLog('warn', 'mtf_yahoo_fetch_failed', { symbol, interval, range, status: y.status, cached: y.cached, stale: y.stale }, 'api/mtf');

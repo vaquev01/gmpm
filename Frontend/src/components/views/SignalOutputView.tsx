@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
 import { Card, Badge, Metric, Spinner, ErrorBox, ProgressBar, TabBar, fmt, pctFmt, cleanSymbol } from '../ui/primitives';
+import { useMeso, useRegime } from '../../hooks/useApi';
 
 // --- TYPES ---
 interface TradeSignal {
@@ -17,25 +17,9 @@ interface MacroContext {
   fearGreed?: number;
 }
 
-interface MesoAllowed {
-  symbol: string; direction: 'LONG' | 'SHORT'; class: string; reason: string; score: number;
-}
-
-interface MesoResponse {
-  success: boolean; timestamp: string;
-  executiveSummary: { marketBias: string; regimeLabel: string; oneLineSummary: string; vix: number | null; yieldCurve: number | null; dollarIndex: number | null; fearGreed: { value: number; classification: string } | number | null };
-  microInputs?: { allowedInstruments: MesoAllowed[]; prohibitedInstruments: { symbol: string; reason: string }[] };
-  summary?: { riskWarnings: string[] };
-}
-
-interface RegimeResponse {
-  success: boolean;
-  snapshot?: { regime: string; regimeConfidence: string };
-}
-
 function useSignalData() {
-  const meso = useQuery<MesoResponse>({ queryKey: ['meso'], queryFn: () => fetch('/api/meso').then(r => r.json()), staleTime: 30_000, refetchInterval: 60_000 });
-  const regime = useQuery<RegimeResponse>({ queryKey: ['regime'], queryFn: () => fetch('/api/regime').then(r => r.json()), staleTime: 15_000, refetchInterval: 30_000 });
+  const meso = useMeso();
+  const regime = useRegime();
 
   // Only show meaningful signals (score >= 40) and sort by quality
   const allInstruments = meso.data?.microInputs?.allowedInstruments || [];

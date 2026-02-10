@@ -1,7 +1,7 @@
 import { useState, useMemo } from 'react';
-import { useQuery } from '@tanstack/react-query';
 import { Card, Badge, Metric, Spinner, ErrorBox, ProgressBar, TabBar, fmt, priceFmt, cleanSymbol } from '../ui/primitives';
 import { useTerminal } from '../../store/useTerminal';
+import { useCurrencyStrength } from '../../hooks/useApi';
 
 // --- TYPES ---
 interface CurrencyStrength {
@@ -51,13 +51,6 @@ const CURRENCY_META: Record<string, { riskProfile: string; sessionHours: { start
   NZD: { riskProfile: 'RISK_ON', sessionHours: { start: 21, end: 6, name: 'Wellington' } },
 };
 
-function useCurrencyStrength() {
-  return useQuery<CurrencyData>({
-    queryKey: ['currency-strength'],
-    queryFn: () => fetch('/api/currency-strength').then(r => r.json()),
-    staleTime: 30_000, refetchInterval: 60_000,
-  });
-}
 
 const strengthColor = (l: string) => {
   if (l === 'STRONG') return 'text-emerald-400 bg-emerald-500/15';

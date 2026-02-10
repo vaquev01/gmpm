@@ -611,6 +611,7 @@ export function calculateInstitutionalPositionSize(
     factors: Record<string, number>;
     reasoning: string[];
 } {
+    void _newPositionCorrelation;
     const reasoning: string[] = [];
     const factors: Record<string, number> = {};
     

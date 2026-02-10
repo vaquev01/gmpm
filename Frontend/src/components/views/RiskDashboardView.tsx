@@ -1,54 +1,5 @@
-import { useQuery } from '@tanstack/react-query';
 import { Card, Badge, Metric, Spinner, ErrorBox, ProgressBar, fmt } from '../ui/primitives';
-
-// --- TYPES matching actual /api/risk response ---
-interface KellyData {
-  fullKelly: number; halfKelly: number; quarterKelly: number;
-  recommended: number; maxPosition: number;
-  edgeQuality: string; reasoning: string;
-}
-
-interface DrawdownData {
-  currentDrawdown: number; maxDrawdown: number;
-  peakEquity: number; currentEquity: number;
-  drawdownDuration: number; recoveryFactor: number;
-  status: string;
-}
-
-interface CircuitBreaker {
-  name: string; triggered: boolean;
-  threshold: number; currentValue: number;
-  action: string; message: string;
-}
-
-interface RiskBudget {
-  totalBudget: number; usedBudget: number; availableBudget: number;
-  reserveBuffer: number; utilizationRate: number; status: string;
-}
-
-interface RiskReport {
-  timestamp: string;
-  kelly: KellyData;
-  drawdown: DrawdownData;
-  circuitBreakers: CircuitBreaker[];
-  riskBudget: RiskBudget;
-  recommendations: string[];
-  alerts: string[];
-  tradingStatus: string;
-}
-
-interface RiskResponse {
-  success: boolean;
-  report: RiskReport;
-}
-
-function useRisk() {
-  return useQuery<RiskResponse>({
-    queryKey: ['risk'],
-    queryFn: () => fetch('/api/risk').then(r => r.json()),
-    staleTime: 15_000, refetchInterval: 30_000,
-  });
-}
+import { useRisk, type RiskReport, type CircuitBreaker, type KellyData, type DrawdownData, type RiskBudget } from '../../hooks/useApi';
 
 const statusColor = (s: string) => {
   if (s === 'HEALTHY' || s === 'NORMAL' || s === 'OPTIMAL') return 'text-emerald-400';

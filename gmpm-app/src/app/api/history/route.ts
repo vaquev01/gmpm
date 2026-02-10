@@ -95,7 +95,7 @@ export async function GET(request: Request) {
     try {
         const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=${periodConfig.interval}&range=${periodConfig.range}`;
 
-        const y = await yahooFetchJson(url, 300_000);
+        const y = await yahooFetchJson(url, 300_000, 12_000, 2500);
         if (!y.ok || !y.data) {
             serverLog('warn', 'history_yahoo_fetch_failed', { symbol, period, status: y.status, cached: y.cached, stale: y.stale }, 'api/history');
             return NextResponse.json({

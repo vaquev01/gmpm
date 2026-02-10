@@ -216,6 +216,70 @@ async function main() {
     assert(typeof cls.liquidityScore === 'number', '/api/meso class missing liquidityScore');
   }
 
+  const { res: csRes, json: cs } = await getJson('/api/currency-strength');
+  assert(csRes.ok, `/api/currency-strength HTTP ${csRes.status}`);
+  assert(cs && cs.success === true, `/api/currency-strength success=false: ${cs?.error || 'unknown error'}`);
+  assert(typeof cs.timestamp === 'string', '/api/currency-strength missing timestamp');
+  assert(Array.isArray(cs.currencies), '/api/currency-strength missing currencies array');
+  assert(cs.currencies.length >= 6, '/api/currency-strength currencies unexpectedly small');
+  assert(isRecord(cs.globalFlow), '/api/currency-strength missing globalFlow');
+  assert(typeof cs.globalFlow.dominantFlow === 'string', '/api/currency-strength globalFlow.dominantFlow not string');
+  assert(typeof cs.globalFlow.weakestCurrency === 'string', '/api/currency-strength globalFlow.weakestCurrency not string');
+  assert(Array.isArray(cs.bestPairs), '/api/currency-strength missing bestPairs array');
+
+  if (cs.bestPairs.length > 0) {
+    for (const p of cs.bestPairs) {
+      assert(isRecord(p), '/api/currency-strength bestPairs[] not object');
+      assert(typeof p.symbol === 'string', '/api/currency-strength bestPairs[].symbol not string');
+      assert(p.direction === 'LONG' || p.direction === 'SHORT', '/api/currency-strength bestPairs[].direction invalid');
+      if (isRecord(p.tradePlan)) {
+        assert(isRecord(p.tradePlan.entryZone), '/api/currency-strength tradePlan.entryZone missing');
+        assert(isFiniteNumber(p.tradePlan.entryZone.from), '/api/currency-strength tradePlan.entryZone.from not number');
+        assert(isFiniteNumber(p.tradePlan.entryZone.to), '/api/currency-strength tradePlan.entryZone.to not number');
+        assert(p.tradePlan.entryZone.from <= p.tradePlan.entryZone.to, '/api/currency-strength entryZone.from > entryZone.to');
+        assert(isFiniteNumber(p.tradePlan.stopLoss), '/api/currency-strength tradePlan.stopLoss not number');
+        assert(isFiniteNumber(p.tradePlan.takeProfit), '/api/currency-strength tradePlan.takeProfit not number');
+        assert(isFiniteNumber(p.tradePlan.riskReward), '/api/currency-strength tradePlan.riskReward not number');
+        assert(p.tradePlan.riskReward > 0, '/api/currency-strength tradePlan.riskReward must be > 0');
+        assert(typeof p.tradePlan.horizon === 'string', '/api/currency-strength tradePlan.horizon not string');
+        assert(typeof p.tradePlan.executionWindow === 'string', '/api/currency-strength tradePlan.executionWindow not string');
+      }
+    }
+  }
+
+  {
+    let sym = 'EURUSD=X';
+    let cls = 'forex';
+    if (cs.bestPairs.length > 0 && typeof cs.bestPairs[0]?.symbol === 'string') {
+      sym = cs.bestPairs[0].symbol;
+    }
+
+    if (sym.includes('-USD')) cls = 'crypto';
+    if (sym.includes('=F')) cls = 'commodity';
+    if (sym.startsWith('^')) cls = 'index';
+    if (sym.includes('=X')) cls = 'forex';
+
+    const { res: lmRes, json: lm } = await getJson(`/api/liquidity-map?symbol=${encodeURIComponent(sym)}&class=${encodeURIComponent(cls)}`);
+    assert(lmRes.ok, `/api/liquidity-map single HTTP ${lmRes.status}`);
+    assert(lm && lm.success === true, `/api/liquidity-map single success=false: ${lm?.error || 'unknown error'}`);
+    assert(typeof lm.timestamp === 'string', '/api/liquidity-map single missing timestamp');
+    assert(isRecord(lm.data), '/api/liquidity-map single missing data');
+    assert(lm.data.symbol === sym, '/api/liquidity-map single data.symbol mismatch');
+    assert(typeof lm.data.displaySymbol === 'string', '/api/liquidity-map single displaySymbol not string');
+    assert(isFiniteNumber(lm.data.currentPrice), '/api/liquidity-map single currentPrice not number');
+    assert(isFiniteNumber(lm.data.atr), '/api/liquidity-map single atr not number');
+    assert(isRecord(lm.data.poc), '/api/liquidity-map single poc missing');
+    assert(isFiniteNumber(lm.data.poc.price), '/api/liquidity-map single poc.price not number');
+    assert(isRecord(lm.data.valueArea), '/api/liquidity-map single valueArea missing');
+    assert(isFiniteNumber(lm.data.valueArea.low), '/api/liquidity-map single valueArea.low not number');
+    assert(isFiniteNumber(lm.data.valueArea.high), '/api/liquidity-map single valueArea.high not number');
+    assert(isRecord(lm.data.timing), '/api/liquidity-map single timing missing');
+    assert(typeof lm.data.timing.nextLikelyWindow === 'string', '/api/liquidity-map single timing.nextLikelyWindow not string');
+    assert(typeof lm.data.marketDirection === 'string', '/api/liquidity-map single marketDirection not string');
+    assert(Array.isArray(lm.data.buySideLiquidity), '/api/liquidity-map single buySideLiquidity not array');
+    assert(Array.isArray(lm.data.sellSideLiquidity), '/api/liquidity-map single sellSideLiquidity not array');
+  }
+
   // Pipeline integration: MESO -> MICRO -> LAB (single symbol)
   {
     const allowed = meso.microInputs?.allowedInstruments;
@@ -270,6 +334,101 @@ async function main() {
     assert(sl && sl.success === true, `/api/server-logs success=false: ${sl?.error || 'unknown error'}`);
     assert(Array.isArray(sl.entries), '/api/server-logs missing entries array');
     assert(sl.entries.length > 0, '/api/server-logs returned 0 entries after generating logs');
+  }
+
+  // /api/health should return ok
+  {
+    const { res: hRes, json: h } = await getJson('/api/health');
+    assert(hRes.ok, `/api/health HTTP ${hRes.status}`);
+    assert(h && h.ok === true, '/api/health ok not true');
+    assert(isFiniteNumber(h.ts), '/api/health ts not a number');
+    assert(isFiniteNumber(h.uptime), '/api/health uptime not a number');
+  }
+
+  // /api/signals — track a test signal, read it, close it
+  {
+    const testId = `smoke-test-${Date.now()}`;
+    const trackRes = await fetch(`${baseUrl}/api/signals`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'track',
+        signal: {
+          id: testId,
+          asset: 'SMOKE_TEST',
+          assetClass: 'test',
+          direction: 'LONG',
+          entryPrice: 100,
+          stopLoss: 95,
+          takeProfits: [{ price: 110, ratio: '2R' }],
+          score: 80,
+          tier: 'B',
+          components: { test: 80 },
+          regime: 'RISK_ON',
+          status: 'ACTIVE',
+          currentPrice: 100,
+          currentPnL: 0,
+          createdAt: Date.now(),
+          expiresAt: Date.now() + 86400000,
+        },
+      }),
+    });
+    assert(trackRes.ok, `/api/signals POST track HTTP ${trackRes.status}`);
+    const trackJson = await trackRes.json();
+    assert(trackJson.success === true, '/api/signals track failed');
+
+    // Read it back
+    const { res: listRes, json: listJson } = await getJson('/api/signals?status=ACTIVE');
+    assert(listRes.ok, `/api/signals GET HTTP ${listRes.status}`);
+    assert(listJson.success === true, '/api/signals GET failed');
+    assert(Array.isArray(listJson.signals), '/api/signals signals not array');
+    const found = listJson.signals.find((s) => s.id === testId);
+    assert(found, '/api/signals tracked signal not found');
+    assert(found.asset === 'SMOKE_TEST', '/api/signals asset mismatch');
+
+    // Close it
+    const closeRes = await fetch(`${baseUrl}/api/signals`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'close',
+        id: testId,
+        exitPrice: 108,
+        exitReason: 'HIT_TP1',
+      }),
+    });
+    assert(closeRes.ok, `/api/signals POST close HTTP ${closeRes.status}`);
+    const closeJson = await closeRes.json();
+    assert(closeJson.success === true, '/api/signals close failed');
+    assert(closeJson.outcome, '/api/signals close missing outcome');
+    assert(closeJson.outcome.outcome === 'WIN', '/api/signals close outcome should be WIN');
+
+    // Verify outcomes
+    const { res: outcomeRes, json: outcomeJson } = await getJson('/api/signals?outcomes=1');
+    assert(outcomeRes.ok, `/api/signals outcomes HTTP ${outcomeRes.status}`);
+    assert(outcomeJson.success === true, '/api/signals outcomes failed');
+    assert(Array.isArray(outcomeJson.outcomes), '/api/signals outcomes not array');
+    assert(outcomeJson.outcomes.length > 0, '/api/signals no outcomes after close');
+    assert(isRecord(outcomeJson.stats), '/api/signals stats missing');
+    assert(isFiniteNumber(outcomeJson.stats.total), '/api/signals stats.total not number');
+  }
+
+  // /api/monitor should run without errors
+  {
+    const { res: monRes, json: mon } = await getJson('/api/monitor');
+    assert(monRes.ok, `/api/monitor HTTP ${monRes.status}`);
+    assert(mon && mon.success === true, `/api/monitor success=false: ${mon?.error || 'unknown error'}`);
+    assert(isFiniteNumber(mon.activeSignals), '/api/monitor activeSignals not number');
+    assert(isFiniteNumber(mon.duration), '/api/monitor duration not number');
+  }
+
+  // /api/risk should now return dataSource field
+  {
+    const { res: riskRes, json: risk } = await getJson('/api/risk');
+    assert(riskRes.ok, `/api/risk HTTP ${riskRes.status}`);
+    assert(risk && risk.success === true, `/api/risk success=false: ${risk?.error || 'unknown error'}`);
+    assert(typeof risk.dataSource === 'string', '/api/risk missing dataSource');
+    assert(isRecord(risk.report), '/api/risk missing report');
   }
 
   process.stdout.write('SMOKE_OK\n');

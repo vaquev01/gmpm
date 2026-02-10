@@ -1,7 +1,8 @@
-import { useState, useMemo, useCallback, useEffect } from 'react';
+import { useState, useMemo, useCallback } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Card, Badge, Metric, Spinner, ErrorBox, ProgressBar, TabBar, fmt, pctFmt, priceFmt, cleanSymbol, pctColor } from '../ui/primitives';
 import { useTerminal } from '../../store/useTerminal';
+import { useRegime } from '../../hooks/useApi';
 
 // --- TYPES ---
 interface ScanResult {
@@ -189,6 +190,7 @@ function useScannerData() {
     queryFn: async () => { const c = new AbortController(); const t = setTimeout(() => c.abort(), 120_000); try { const r = await fetch('/api/micro', { signal: c.signal }); return r.json(); } finally { clearTimeout(t); } },
     staleTime: 60_000, refetchInterval: 120_000, retry: 1,
   });
+  const regime = useRegime();
 
   const execWindow = getExecWindow();
 
@@ -284,7 +286,16 @@ function useScannerData() {
       }
       microScore = Math.max(0, Math.min(100, Math.round(microScore)));
 
-      const macroScore = 60; // Default until regime is integrated
+      // Dynamic macroScore from regime data
+      let macroScore = 50;
+      const snap = regime.data?.snapshot;
+      if (snap) {
+        const axes = Object.values(snap.axes || {});
+        const avgAxes = axes.length > 0 ? axes.reduce((s, ax) => s + (ax.score ?? 50), 0) / axes.length : 50;
+        const confBonus = snap.regimeConfidence === 'HIGH' ? 10 : snap.regimeConfidence === 'LOW' ? -10 : 0;
+        const regimeBonus = snap.regime === 'RISK_ON' ? 8 : snap.regime === 'RISK_OFF' ? -8 : 0;
+        macroScore = Math.max(0, Math.min(100, Math.round(avgAxes + confBonus + regimeBonus)));
+      }
       const liquidityScore = conf.components.volume;
 
       const qualityOk = !a.quality || a.quality.status === 'OK';
@@ -320,7 +331,7 @@ function useScannerData() {
         oneLiner, breakdown,
       };
     }).sort((a, b) => b.trustScore - a.trustScore);
-  }, [market.data, meso.data, micro.data, execWindow.status]);
+  }, [market.data, meso.data, micro.data, regime.data, execWindow.status]);
 
   const summary = useMemo(() => {
     const tier1 = results.filter(r => r.tier === 'TIER_1').length;

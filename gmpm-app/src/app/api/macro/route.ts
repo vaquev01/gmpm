@@ -115,7 +115,7 @@ type MacroQuote = {
 async function fetchMacroQuote(symbol: string): Promise<MacroQuote | null> {
     try {
         const url = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1d&range=10d`;
-        const y = await yahooFetchJson(url, 60_000, 7000);
+        const y = await yahooFetchJson(url, 60_000, 7000, 2500);
         if (!y.ok || !y.data) return null;
 
         const data = y.data as YahooChartResponse;

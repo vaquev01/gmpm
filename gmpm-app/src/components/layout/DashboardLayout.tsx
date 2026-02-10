@@ -259,16 +259,22 @@ export const DashboardLayout = ({ children }: DashboardLayoutProps) => {
 };
 
 const Clock = () => {
-    const mountedRef = React.useRef(false);
-    const [time, setTime] = useState(() => new Date());
+    const [mounted, setMounted] = useState(false);
+    const [time, setTime] = useState<Date | null>(null);
 
     useEffect(() => {
-        mountedRef.current = true;
+        const boot = setTimeout(() => {
+            setMounted(true);
+            setTime(new Date());
+        }, 0);
         const timer = setInterval(() => setTime(new Date()), 1000);
-        return () => { mountedRef.current = false; clearInterval(timer); };
+        return () => {
+            clearTimeout(boot);
+            clearInterval(timer);
+        };
     }, []);
 
-    if (typeof window === 'undefined') return null;
+    if (!mounted || !time) return null;
 
     return (
         <div className="text-right leading-tight pl-3 border-l border-white/[0.06]">

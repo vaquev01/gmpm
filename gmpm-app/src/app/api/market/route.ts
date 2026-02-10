@@ -316,7 +316,7 @@ async function fetchYahooQuote(symbol: string): Promise<QuoteData | null> {
     try {
         const url = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1d&range=30d`;
 
-        const y = await yahooFetchJson(url, 180_000, 7000);
+        const y = await yahooFetchJson(url, 180_000, 7000, 2500);
         if (!y.ok || !y.data) return null;
 
         const data = y.data as YahooChartResponse;
@@ -774,7 +774,8 @@ export async function GET(request: Request) {
             lastGoodSnapshot = { payload, timestamp: payload.timestamp };
         }
 
-        if (degraded && lastGoodSnapshot) {
+        const isDefaultRequest = !symbolsParam && !category && !assetClass && !(limit > 0);
+        if (degraded && lastGoodSnapshot && isDefaultRequest) {
             serverLog('warn', 'market_snapshot_fallback', { reason: 'DEGRADED_FALLBACK', requestedCount, count: allQuotes.length, coverage }, 'api/market');
             const last = lastGoodSnapshot.payload as Record<string, unknown>;
             return {
@@ -802,7 +803,8 @@ export async function GET(request: Request) {
         } catch (error) {
         serverLog('error', 'market_api_error', { error: String(error) }, 'api/market');
 
-        if (lastGoodSnapshot) {
+        const isDefaultRequest = !symbolsParam && !category && !assetClass && !(limit > 0);
+        if (lastGoodSnapshot && isDefaultRequest) {
             serverLog('warn', 'market_snapshot_degraded', { error: String(error) }, 'api/market');
             const last = lastGoodSnapshot.payload as Record<string, unknown>;
             return {

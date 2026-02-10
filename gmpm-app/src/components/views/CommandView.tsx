@@ -1654,7 +1654,6 @@ const AssetDetailPanel = ({
     executionEnabled,
     executionDisabledReason,
     microSetup,
-    microAnalysis,
 }: {
     asset: ScoredAsset;
     onClose: () => void;

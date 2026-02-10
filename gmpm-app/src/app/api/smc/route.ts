@@ -31,7 +31,7 @@ async function fetchCandles(symbol: string, interval: string = '1d'): Promise<Ca
 
         const url = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?period1=${period1}&period2=${period2}&interval=${interval}`;
 
-        const y = await yahooFetchJson(url, 300_000);
+        const y = await yahooFetchJson(url, 300_000, 12_000, 2500);
         if (!y.ok || !y.data) {
             serverLog('warn', 'smc_yahoo_fetch_failed', { symbol, interval, status: y.status, cached: y.cached, stale: y.stale }, 'api/smc');
             return [];
