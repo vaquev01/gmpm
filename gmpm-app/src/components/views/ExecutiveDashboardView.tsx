@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useStore } from '@/store/useStore';
 import {
     Zap, ArrowRight, Play, CheckCircle2,
@@ -21,10 +21,22 @@ export const ExecutiveDashboardView = () => {
         const learning = loadLearningState();
         return learning.confidence;
     });
-    const [regime] = useState<string>(() => {
-        const h = new Date().getHours();
-        return h > 9 && h < 16 ? 'RISK_ON' : 'NEUTRAL';
-    });
+    const [regime, setRegime] = useState<string>('LOADING');
+
+    useEffect(() => {
+        let alive = true;
+        fetch('/api/regime', { cache: 'no-store', signal: AbortSignal.timeout(10000) })
+            .then(r => r.json())
+            .then(data => {
+                if (alive && data.success && data.snapshot?.regime) {
+                    setRegime(data.snapshot.regime);
+                } else if (alive) {
+                    setRegime('UNKNOWN');
+                }
+            })
+            .catch(() => { if (alive) setRegime('UNKNOWN'); });
+        return () => { alive = false; };
+    }, []);
 
     // Helper for score color
     const getScoreColor = (score: number) => {

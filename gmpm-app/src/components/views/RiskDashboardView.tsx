@@ -44,31 +44,71 @@ export const RiskDashboardView = () => {
         setTrackingSummary(getTrackingSummary());
         setPortfolioRisk(calculatePortfolioRisk());
 
-        // Get trades from learning state for Monte Carlo
-        const learningState = loadLearningState();
-        if (learningState.totalSignals > 10) {
-            // Create trade array from learning data
-            const trades = [];
-            const avgWinR = 1.5; // Estimate
-            const avgLossR = -1;
-
-            for (let i = 0; i < learningState.totalWins; i++) {
-                trades.push({ pnlR: avgWinR, winLoss: 'WIN' as const });
+        // Fetch server-side outcome stats for Monte Carlo + Kelly
+        try {
+            const serverRes = await fetch('/api/signals?outcomes=1', { cache: 'no-store' });
+            const serverData = await serverRes.json();
+            if (serverData.success && Array.isArray(serverData.outcomes) && serverData.outcomes.length >= 5) {
+                const trades = serverData.outcomes.map((o: { pnlR: number; outcome: string }) => ({
+                    pnlR: o.pnlR,
+                    winLoss: o.outcome === 'WIN' ? 'WIN' as const : 'LOSS' as const,
+                }));
+                if (trades.length >= 10) {
+                    setMonteCarloResult(runMonteCarloSimulation(trades, { simulations: 500 }));
+                    setKelly(calculateKellyCriterion(trades));
+                }
+            } else {
+                // Fallback: use local learning state
+                const learningState = loadLearningState();
+                if (learningState.totalSignals > 10) {
+                    const trades = [];
+                    const avgWinR = 1.5;
+                    const avgLossR = -1;
+                    for (let i = 0; i < learningState.totalWins; i++) {
+                        trades.push({ pnlR: avgWinR, winLoss: 'WIN' as const });
+                    }
+                    for (let i = 0; i < learningState.totalLosses; i++) {
+                        trades.push({ pnlR: avgLossR, winLoss: 'LOSS' as const });
+                    }
+                    if (trades.length >= 10) {
+                        setMonteCarloResult(runMonteCarloSimulation(trades, { simulations: 500 }));
+                        setKelly(calculateKellyCriterion(trades));
+                    }
+                }
             }
-            for (let i = 0; i < learningState.totalLosses; i++) {
-                trades.push({ pnlR: avgLossR, winLoss: 'LOSS' as const });
-            }
-
-            if (trades.length >= 10) {
-                setMonteCarloResult(runMonteCarloSimulation(trades, { simulations: 500 }));
-                setKelly(calculateKellyCriterion(trades));
+        } catch {
+            // Fallback to learning state if server unavailable
+            const learningState = loadLearningState();
+            if (learningState.totalSignals > 10) {
+                const trades = [];
+                for (let i = 0; i < learningState.totalWins; i++) trades.push({ pnlR: 1.5, winLoss: 'WIN' as const });
+                for (let i = 0; i < learningState.totalLosses; i++) trades.push({ pnlR: -1, winLoss: 'LOSS' as const });
+                if (trades.length >= 10) {
+                    setMonteCarloResult(runMonteCarloSimulation(trades, { simulations: 500 }));
+                    setKelly(calculateKellyCriterion(trades));
+                }
             }
         }
 
-        // Run Stress Tests
-        // Mocking capital/exposure for MVP if no real portfolio yet
-        const capital = 100000;
-        const exposure = 65000; // 65% invested
+        // Fetch real risk data for capital/exposure from /api/risk
+        let capital = 100000;
+        let exposure = 0;
+        try {
+            const riskRes = await fetch('/api/risk', { cache: 'no-store' });
+            const riskData = await riskRes.json();
+            if (riskData.success && riskData.report) {
+                capital = riskData.report.positionSizing?.accountBalance || 100000;
+                // Calculate exposure from active positions
+                const activeSignals = getAllTrackedSignals().filter(s => s.status === 'ACTIVE');
+                if (activeSignals.length > 0 && riskData.report.positionSizing?.suggestedSize) {
+                    exposure = activeSignals.length * (riskData.report.positionSizing.suggestedSize * capital / 100);
+                } else {
+                    exposure = capital * 0.3; // Conservative 30% default
+                }
+            }
+        } catch {
+            exposure = capital * 0.3;
+        }
         setStressResults(runStressTest(capital, exposure));
 
         setLoading(false);

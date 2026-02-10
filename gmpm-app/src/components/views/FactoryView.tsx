@@ -14,7 +14,7 @@ export const FactoryView = () => {
     const { factoryTab: activeTab, setFactoryTab: setActiveTab } = useStore();
 
     const tabs = [
-        { id: 'paper', label: 'Incubator (Paper)', icon: FlaskConical },
+        { id: 'paper', label: 'Paper Trading', icon: FlaskConical },
         { id: 'backtest', label: 'Backtest Engine', icon: History },
         { id: 'risk', label: 'Risk Manager', icon: Shield },
         { id: 'learning', label: 'Learning Loop', icon: Factory },
