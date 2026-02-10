@@ -118,6 +118,25 @@ interface SetupTrigger {
     type: 'PRICE_BREAK' | 'CANDLE_CLOSE' | 'VOLUME_CONFIRM' | 'PATTERN_COMPLETE';
 }
 
+interface TrailingConfig {
+    type: 'ATR' | 'STRUCTURE' | 'EMA' | 'FIXED_PERCENT';
+    // Trailing SL: move SL to breakeven after TP1, then trail by ATR or structure
+    activateAfter: 'TP1_HIT' | 'BREAKEVEN' | '1R_PROFIT';
+    trailDistance: number;         // ATR multiplier or % distance
+    trailDistanceLabel: string;    // Human-readable, e.g. "1.0 ATR" or "0.5%"
+    // Trailing TP: extend TP if momentum continues
+    tpExtendCondition: string;     // e.g. "RSI > 60 and trend ALIGNED → hold to TP3"
+    tpExtendTarget?: number;       // Extended TP level
+}
+
+interface InvalidationCondition {
+    type: 'PRICE' | 'INDICATOR' | 'STRUCTURE' | 'TIME';
+    level?: number;                // Price level for PRICE type
+    description: string;           // Full description of what invalidates
+    action: string;                // What to do: "Close immediately", "Reduce 50%", etc.
+    severity: 'HARD' | 'SOFT';    // HARD = close trade, SOFT = reduce/monitor
+}
+
 interface Setup {
     id: string;
     symbol: string;
@@ -138,6 +157,11 @@ interface Setup {
     mesoAlignment: boolean;
     technicalScore: number;
     trigger?: SetupTrigger;
+    // === INSTITUTIONAL ENHANCEMENTS ===
+    trailingSL?: TrailingConfig;
+    invalidationConditions?: InvalidationCondition[];
+    executionPlan?: string;        // Step-by-step execution instructions
+    managementPlan?: string;       // Post-entry management rules
 }
 
 interface MicroAnalysis {
@@ -901,6 +925,100 @@ function generateSetups(
         `${mesoDirection} ${displaySymbol}: ${setupType} @ ${smc.premiumDiscount.toLowerCase()}. ` +
         `${scenarioAnalysis.statusReason}${levelInfo}`;
     
+    // === TRAILING SL/TP CONFIGURATION ===
+    const trailDistance = atr * 0.8;
+    const trailType: TrailingConfig['type'] = smc.orderBlocks.length > 0 ? 'STRUCTURE' : 'ATR';
+    const trailingSL: TrailingConfig = {
+        type: trailType,
+        activateAfter: confidence === 'HIGH' ? '1R_PROFIT' : 'TP1_HIT',
+        trailDistance,
+        trailDistanceLabel: trailType === 'ATR' ? `${(trailDistance / atr).toFixed(1)} ATR (${trailDistance.toFixed(4)})` : `Structure + ${(trailDistance / 2).toFixed(4)} buffer`,
+        tpExtendCondition: isLong
+            ? `RSI > 55 AND H1 trend BULLISH AND volume > 1.0x avg → manter até TP3 (${tp3.toFixed(4)})`
+            : `RSI < 45 AND H1 trend BEARISH AND volume > 1.0x avg → manter até TP3 (${tp3.toFixed(4)})`,
+        tpExtendTarget: tp3,
+    };
+
+    // === INVALIDATION CONDITIONS ===
+    const invalidationConditions: InvalidationCondition[] = [];
+    
+    // 1. HARD: Price-based SL
+    invalidationConditions.push({
+        type: 'PRICE',
+        level: stopLoss,
+        description: isLong
+            ? `Fechamento H1 abaixo de ${stopLoss.toFixed(4)}`
+            : `Fechamento H1 acima de ${stopLoss.toFixed(4)}`,
+        action: 'Fechar posição imediatamente. Sem discussão.',
+        severity: 'HARD',
+    });
+
+    // 2. SOFT: RSI divergence contra
+    invalidationConditions.push({
+        type: 'INDICATOR',
+        description: isLong
+            ? `RSI > 80 com divergência bearish no H1 (RSI fazendo topos menores enquanto preço sobe)`
+            : `RSI < 20 com divergência bullish no H1 (RSI fazendo fundos maiores enquanto preço cai)`,
+        action: 'Reduzir posição em 50%. Mover SL para breakeven.',
+        severity: 'SOFT',
+    });
+
+    // 3. HARD: Structure break
+    const structureLevel = isLong ? levels.support[0] : levels.resistance[0];
+    if (Number.isFinite(structureLevel) && structureLevel > 0) {
+        invalidationConditions.push({
+            type: 'STRUCTURE',
+            level: structureLevel,
+            description: isLong
+                ? `Break of Structure (BOS) bearish — preço rompe suporte ${structureLevel.toFixed(4)} com corpo de candle`
+                : `Break of Structure (BOS) bullish — preço rompe resistência ${structureLevel.toFixed(4)} com corpo de candle`,
+            action: 'Fechar posição. Cenário MESO invalidado.',
+            severity: 'HARD',
+        });
+    }
+
+    // 4. SOFT: Volume dry-up
+    invalidationConditions.push({
+        type: 'INDICATOR',
+        description: 'Volume relativo cai abaixo de 0.5x média por 3+ candles consecutivos',
+        action: 'Reduzir posição em 30%. Trade perdendo momentum.',
+        severity: 'SOFT',
+    });
+
+    // 5. SOFT: Time-based expiry
+    const validityHours = trend.alignment === 'ALIGNED' ? 48 : 24;
+    invalidationConditions.push({
+        type: 'TIME',
+        description: `Setup não atingiu TP1 em ${validityHours}h`,
+        action: `Fechar ao preço de mercado após ${validityHours}h sem atingir alvo. Oportunidade esgotada.`,
+        severity: 'SOFT',
+    });
+
+    // === EXECUTION PLAN ===
+    const riskPips = Math.abs(entry - stopLoss);
+    const riskPercent = price > 0 ? ((riskPips / price) * 100).toFixed(2) : '?';
+    const executionPlan = [
+        `1. ENTRY: ${isLong ? 'BUY' : 'SELL'} ${displaySymbol} @ ${entry.toFixed(4)} (limit order)`,
+        `2. STOP LOSS: ${stopLoss.toFixed(4)} (${riskPercent}% de risco | ${riskPips.toFixed(4)} de distância)`,
+        `3. TP1: ${tp1.toFixed(4)} (R:R ${riskReward.toFixed(1)}) → Fechar 40% da posição`,
+        `4. TP2: ${tp2.toFixed(4)} → Fechar 30% da posição`,
+        `5. TP3: ${tp3.toFixed(4)} → Fechar 30% restante`,
+        `6. Após TP1: Mover SL para breakeven (${entry.toFixed(4)})`,
+        `7. Trailing: ${trailingSL.trailDistanceLabel} após ativação`,
+    ].join('\n');
+
+    // === MANAGEMENT PLAN ===
+    const managementPlan = [
+        `• PRÉ-ENTRADA: Verificar volume > 0.8x média. Candle de confirmação no ${trend.alignment === 'ALIGNED' ? 'H1' : 'M15'}.`,
+        `• PÓS-ENTRADA: Monitorar RSI, volume relativo e estrutura de mercado.`,
+        `• TP1 ATINGIDO: Fechar 40%. SL → breakeven (${entry.toFixed(4)}). Ativar trailing.`,
+        `• TP2 ATINGIDO: Fechar 30%. Trailing continua no restante.`,
+        `• TRAILING ATIVO: ${trailingSL.trailDistanceLabel}. Ajustar abaixo/acima de cada swing ${isLong ? 'low' : 'high'}.`,
+        `• EXTENSÃO: ${trailingSL.tpExtendCondition}`,
+        `• INVALIDAÇÃO HARD: Fechar TUDO se qualquer condição HARD for atingida.`,
+        `• INVALIDAÇÃO SOFT: Reduzir conforme indicado. Reavaliar em 1h.`,
+    ].join('\n');
+
     const setup: Setup = {
         id: `${symbol}-${setupType}-${Date.now()}`,
         symbol,
@@ -920,6 +1038,10 @@ function generateSetups(
         thesis,
         mesoAlignment: scenarioAnalysis.status === 'PRONTO',
         technicalScore: scenarioAnalysis.technicalAlignment,
+        trailingSL,
+        invalidationConditions,
+        executionPlan,
+        managementPlan,
     };
     
     return { setup, scenarioAnalysis, levelSources };

@@ -178,14 +178,31 @@ const ASSETS = {
     ],
 };
 
+// CORE SYMBOLS - Fast initial load (most important assets only)
+const CORE_SYMBOLS = [
+    // Key Forex (8)
+    'EURUSD=X', 'GBPUSD=X', 'USDJPY=X', 'AUDUSD=X', 'USDCAD=X', 'NZDUSD=X', 'GBPJPY=X', 'EURJPY=X',
+    // Key Commodities (6)
+    'GC=F', 'SI=F', 'CL=F', 'NG=F', 'HG=F', 'DX=F',
+    // Key Indices (6)
+    '^GSPC', '^DJI', '^IXIC', '^VIX', '^FTSE', '^N225',
+    // Key Crypto (5)
+    'BTC-USD', 'ETH-USD', 'SOL-USD', 'XRP-USD', 'ADA-USD',
+    // Key Futures (4)
+    'ES=F', 'NQ=F', 'YM=F', 'RTY=F',
+    // Key Rates (3)
+    '^TNX', '^TYX', '^FVX',
+];
+
 // Flatten all symbols and deduplicate
 const ALL_SYMBOLS = [...new Set([
     ...ASSETS.forex,
-    ...ASSETS.commodities.slice(0, 15), // Top commodities
+    ...ASSETS.commodities,
     ...ASSETS.indices,
     ...ASSETS.etfs,
     ...ASSETS.crypto,
     ...ASSETS.stocks,
+    ...ASSETS.volatility,
     ...ASSETS.bonds,
 ])];
 
@@ -564,7 +581,8 @@ export async function GET(request: Request) {
     async function buildSnapshot(): Promise<{ status: number; payload: unknown; cacheable: boolean }> {
         const macroSymbols = includeMacro ? ['^VIX', '^TNX', '^TYX', '^FVX', 'DX=F'] : [];
 
-        let symbolsToFetch = ALL_SYMBOLS;
+        // Default to CORE_SYMBOLS for fast initial load (32 assets vs 278)
+        let symbolsToFetch = CORE_SYMBOLS;
 
         if (symbolsParam && symbolsParam.trim().length > 0) {
             const requested = symbolsParam
@@ -583,8 +601,9 @@ export async function GET(request: Request) {
             symbolsToFetch = ASSETS[mapped];
         }
 
-        if (!symbolsParam && limit > 0) {
-            symbolsToFetch = symbolsToFetch.slice(0, limit);
+        // If limit is specified, use ALL_SYMBOLS and slice
+        if (!symbolsParam && !category && !assetClass && limit > 0) {
+            symbolsToFetch = ALL_SYMBOLS.slice(0, limit);
         }
 
         // Always include core macro context symbols even when limit/category is used

@@ -1653,12 +1653,16 @@ const AssetDetailPanel = ({
     onExecute,
     executionEnabled,
     executionDisabledReason,
+    microSetup,
+    microAnalysis,
 }: {
     asset: ScoredAsset;
     onClose: () => void;
     onExecute: (asset: ScoredAsset) => void;
     executionEnabled: boolean;
     executionDisabledReason: string | null;
+    microSetup?: { action: string; setup: Record<string, unknown> | null; metrics?: Record<string, unknown> } | null;
+    microAnalysis?: { scenarioAnalysis?: Record<string, unknown>; technical?: Record<string, unknown>; liquidityAnalysis?: Record<string, unknown> } | null;
 }) => {
     const [smc, setSmc] = useState<SmcApiResponse | null>(null);
     const [smcLoading, setSmcLoading] = useState(true);
@@ -2181,25 +2185,126 @@ const AssetDetailPanel = ({
                     </div>
                 </div>
 
-                {/* 3. EXECUTION PLAN */}
+                {/* 3. EXECUTION PLAN — Institutional */}
                 <div className="space-y-3">
                     <div className="flex items-center gap-2 text-blue-400 text-xs font-bold uppercase tracking-wider">
                         <Target className="w-4 h-4" /> Execution Plan
                     </div>
-                    <div className="grid grid-cols-1 gap-3 text-sm">
-                        <div className="flex justify-between items-center p-3 bg-blue-500/10 border border-blue-500/20 rounded-md">
-                            <span className="text-blue-300 font-bold">ENTRY ZONE</span>
-                            <span className="font-mono text-white">{asset.entry}</span>
-                        </div>
-                        <div className="flex justify-between items-center p-3 bg-red-500/10 border border-red-500/20 rounded-md">
-                            <span className="text-red-300 font-bold">STOP LOSS (Risks)</span>
-                            <span className="font-mono text-white">{asset.sl}</span>
-                        </div>
-                        <div className="flex justify-between items-center p-3 bg-green-500/10 border border-green-500/20 rounded-md">
-                            <span className="text-green-300 font-bold">TARGET (Profit)</span>
-                            <span className="font-mono text-white">{asset.tp}</span>
-                        </div>
-                    </div>
+
+                    {/* MICRO SETUP — Full institutional output */}
+                    {(() => {
+                        const ms = microSetup?.setup as Record<string, unknown> | null | undefined;
+                        const entry = ms?.entry as number | undefined;
+                        const sl = ms?.stopLoss as number | undefined;
+                        const tp1 = ms?.takeProfit1 as number | undefined;
+                        const tp2 = ms?.takeProfit2 as number | undefined;
+                        const tp3 = ms?.takeProfit3 as number | undefined;
+                        const rr = ms?.riskReward as number | undefined;
+                        const conf = ms?.confidence as string | undefined;
+                        const dir = ms?.direction as string | undefined;
+                        const trailing = ms?.trailingSL as Record<string, unknown> | undefined;
+                        const invalidations = ms?.invalidationConditions as Array<Record<string, unknown>> | undefined;
+                        const execPlan = ms?.executionPlan as string | undefined;
+                        const mgmtPlan = ms?.managementPlan as string | undefined;
+                        const thesis = ms?.thesis as string | undefined;
+                        const hasMicro = !!(entry && sl && tp1);
+                        const fmt = (n?: number) => n != null ? (n < 10 ? n.toFixed(4) : n.toFixed(2)) : '—';
+
+                        return (
+                            <>
+                                {/* Levels grid */}
+                                <div className="grid grid-cols-1 gap-2 text-sm">
+                                    <div className="flex justify-between items-center p-3 bg-blue-500/10 border border-blue-500/20 rounded-md">
+                                        <span className="text-blue-300 font-bold">ENTRY {hasMicro && dir ? `(${dir})` : ''}</span>
+                                        <span className="font-mono text-white">{hasMicro ? fmt(entry) : asset.entry}</span>
+                                    </div>
+                                    <div className="flex justify-between items-center p-3 bg-red-500/10 border border-red-500/20 rounded-md">
+                                        <span className="text-red-300 font-bold">STOP LOSS</span>
+                                        <span className="font-mono text-white">{hasMicro ? fmt(sl) : asset.sl}</span>
+                                    </div>
+                                    <div className="flex justify-between items-center p-2 bg-green-500/10 border border-green-500/20 rounded-md">
+                                        <span className="text-green-300 font-bold text-xs">TP1 (40%)</span>
+                                        <span className="font-mono text-white text-xs">{hasMicro ? fmt(tp1) : asset.tp}</span>
+                                    </div>
+                                    {hasMicro && tp2 ? (
+                                        <div className="flex justify-between items-center p-2 bg-green-500/10 border border-green-500/20 rounded-md">
+                                            <span className="text-green-300 font-bold text-xs">TP2 (30%)</span>
+                                            <span className="font-mono text-white text-xs">{fmt(tp2)}</span>
+                                        </div>
+                                    ) : null}
+                                    {hasMicro && tp3 ? (
+                                        <div className="flex justify-between items-center p-2 bg-green-500/10 border border-green-500/20 rounded-md">
+                                            <span className="text-green-300 font-bold text-xs">TP3 (30%)</span>
+                                            <span className="font-mono text-white text-xs">{fmt(tp3)}</span>
+                                        </div>
+                                    ) : null}
+                                    {hasMicro && rr ? (
+                                        <div className="flex justify-between items-center p-2 bg-purple-500/10 border border-purple-500/20 rounded-md">
+                                            <span className="text-purple-300 font-bold text-xs">R:R | Confidence</span>
+                                            <span className="font-mono text-white text-xs">{typeof rr === 'number' ? rr.toFixed(1) : rr} | {conf || '—'}</span>
+                                        </div>
+                                    ) : null}
+                                </div>
+
+                                {/* Thesis */}
+                                {hasMicro && thesis ? (
+                                    <div className="bg-blue-950/20 border border-blue-900/30 rounded p-2 mt-1">
+                                        <div className="text-[10px] text-blue-400 uppercase font-bold mb-1">Thesis (Macro→Meso→Micro)</div>
+                                        <div className="text-[11px] font-mono text-gray-300 whitespace-pre-wrap leading-relaxed">{thesis}</div>
+                                    </div>
+                                ) : null}
+
+                                {/* Trailing SL/TP */}
+                                {hasMicro && trailing ? (
+                                    <div className="bg-amber-950/20 border border-amber-900/30 rounded p-2 mt-1">
+                                        <div className="text-[10px] text-amber-400 uppercase font-bold mb-1">Trailing SL/TP</div>
+                                        <div className="space-y-1 text-[11px] font-mono text-gray-300">
+                                            <div className="flex justify-between"><span className="text-gray-500">Type</span><span>{String(trailing.type || '')}</span></div>
+                                            <div className="flex justify-between"><span className="text-gray-500">Activate after</span><span>{String(trailing.activateAfter || '')}</span></div>
+                                            <div className="flex justify-between"><span className="text-gray-500">Trail distance</span><span>{String(trailing.trailDistanceLabel || '')}</span></div>
+                                            <div className="text-[10px] text-gray-500 mt-1">TP extension: <span className="text-gray-300">{String(trailing.tpExtendCondition || '—')}</span></div>
+                                        </div>
+                                    </div>
+                                ) : null}
+
+                                {/* Invalidation Conditions */}
+                                {hasMicro && invalidations && invalidations.length > 0 ? (
+                                    <div className="bg-red-950/20 border border-red-900/30 rounded p-2 mt-1">
+                                        <div className="text-[10px] text-red-400 uppercase font-bold mb-1">Invalidation Conditions</div>
+                                        <div className="space-y-2">
+                                            {invalidations.map((inv, i) => (
+                                                <div key={i} className={cn("p-1.5 rounded border text-[10px] font-mono", inv.severity === 'HARD' ? 'border-red-800 bg-red-950/30' : 'border-yellow-800 bg-yellow-950/20')}>
+                                                    <div className="flex items-center gap-1.5">
+                                                        <span className={cn("px-1 py-0.5 rounded text-[9px] font-bold", inv.severity === 'HARD' ? 'bg-red-600 text-white' : 'bg-yellow-600 text-black')}>{String(inv.severity)}</span>
+                                                        <span className="text-gray-400">{String(inv.type)}</span>
+                                                        {inv.level ? <span className="text-gray-200">@ {fmt(inv.level as number)}</span> : null}
+                                                    </div>
+                                                    <div className="text-gray-300 mt-0.5">{String(inv.description)}</div>
+                                                    <div className="text-gray-500 mt-0.5">→ {String(inv.action)}</div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                ) : null}
+
+                                {/* Step-by-step Execution Plan */}
+                                {hasMicro && execPlan ? (
+                                    <div className="bg-blue-950/20 border border-blue-900/30 rounded p-2 mt-1">
+                                        <div className="text-[10px] text-blue-400 uppercase font-bold mb-1">Step-by-Step Execution</div>
+                                        <pre className="text-[10px] font-mono text-gray-300 whitespace-pre-wrap leading-relaxed">{execPlan}</pre>
+                                    </div>
+                                ) : null}
+
+                                {/* Management Plan */}
+                                {hasMicro && mgmtPlan ? (
+                                    <div className="bg-emerald-950/20 border border-emerald-900/30 rounded p-2 mt-1">
+                                        <div className="text-[10px] text-emerald-400 uppercase font-bold mb-1">Post-Entry Management</div>
+                                        <pre className="text-[10px] font-mono text-gray-300 whitespace-pre-wrap leading-relaxed">{mgmtPlan}</pre>
+                                    </div>
+                                ) : null}
+                            </>
+                        );
+                    })()}
                 </div>
 
                 {/* 4. STATS GRID */}
@@ -2722,8 +2827,8 @@ export const CommandView = () => {
                     fullUniverseInFlightRef.current = true;
                     void (async () => {
                         try {
-                            // Load expanded universe (limit=80) in background - not all 278
-                            const full = (await fetchJsonWithTimeout('/api/market?limit=80&macro=0', 120_000)) as MarketSnapshotResponse;
+                            // Load FULL universe (all 278 assets) in background
+                            const full = (await fetchJsonWithTimeout('/api/market?limit=300&macro=0', 180_000)) as MarketSnapshotResponse;
                             if (full.success && Array.isArray(full.data) && full.data.length > (Array.isArray(data.data) ? data.data.length : 0)) {
                                 applySnapshot(full, latency);
                                 fullUniverseLoadedRef.current = true;
@@ -4442,6 +4547,8 @@ const executeSignal = useCallback((asset: ScoredAsset) => {
                             onExecute={executeSignal}
                             executionEnabled={selectedExecution.enabled}
                             executionDisabledReason={selectedExecution.reason}
+                            microSetup={microSetups.find(m => m.symbol === selectedAssetData.symbol) as { action: string; setup: Record<string, unknown> | null; metrics?: Record<string, unknown> } | undefined}
+                            microAnalysis={microAnalyses.find(m => m.symbol === selectedAssetData.symbol) as { scenarioAnalysis?: Record<string, unknown>; technical?: Record<string, unknown>; liquidityAnalysis?: Record<string, unknown> } | undefined}
                         />
                     </div>
                 )}
