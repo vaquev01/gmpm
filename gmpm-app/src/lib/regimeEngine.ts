@@ -181,55 +181,118 @@ export interface MacroInputs {
     marketAvgChange?: number;
     // Timestamps for staleness
     dataTimestamp?: string;
+
+    // ===== REAL FRED DATA (eliminates proxy dependency) =====
+    // Growth (G axis)
+    gdpYoY?: number;              // Real GDP YoY % change
+    industrialProduction?: number; // INDPRO index (proxy for ISM PMI)
+    nfpValue?: number;             // PAYEMS current (thousands)
+    nfpPrevValue?: number;         // PAYEMS previous month (thousands)
+    initialClaims?: number;        // ICSA (thousands)
+    consumerSentiment?: number;    // UMCSENT index
+    // Inflation (I axis)
+    cpiYoY?: number;               // CPI Year-over-Year %
+    corePceYoY?: number;           // Core PCE YoY % (Fed's preferred)
+    breakeven5y?: number;          // T5YIE - 5Y Breakeven Inflation %
+    // Liquidity (L axis)
+    fedBalanceSheet?: number;      // WALCL - Fed Total Assets (millions $)
+    fedBalanceSheetPrev?: number;  // Previous WALCL for change calc
+    reverseRepo?: number;          // RRPONTSYD (billions $)
+    tga?: number;                  // WTREGEN - Treasury General Account (millions $)
+    m2MoneySupply?: number;        // M2SL (billions $)
+    // Credit (C axis)
+    hySpread?: number;             // BAMLH0A0HYM2 - HY OAS spread %
+    aaaSpread?: number;            // BAMLC0A0CM - AAA spread %
+    financialStressIndex?: number; // STLFSI3 index
+    delinquencyRate?: number;      // DRSESP %
 }
 
 /**
- * G (Growth) - Currently using market proxies until PMI/NFP integration
- * Proxies: Fear/Greed, market breadth, avg change
+ * G (Growth) - Real economic data from FRED
+ * Primary: GDP YoY, Industrial Production, NFP change
+ * Secondary: Initial Claims, Consumer Sentiment
+ * Tertiary fallback: Fear/Greed, market breadth
  */
 function calculateGrowthAxis(inputs: MacroInputs): AxisScore {
     const reasons: string[] = [];
     const usedInputs: Record<string, number | string | null> = {};
     let score = 0;
-    let dataPoints = 0;
-    let confidence: ConfidenceLevel = 'PARTIAL';
+    let realDataPoints = 0;
+    let proxyDataPoints = 0;
+    let confidence: ConfidenceLevel = 'OK';
 
-    // Fear/Greed as growth proxy (50 = neutral)
-    if (inputs.fearGreed?.value != null) {
+    // PRIMARY: Real GDP YoY (weight 0.35)
+    if (inputs.gdpYoY != null) {
+        usedInputs['gdpYoY'] = inputs.gdpYoY;
+        // GDP YoY: >3% = strong, 1-3% = moderate, <1% = weak, <0 = contraction
+        const gdpScore = clamp((inputs.gdpYoY - 2) / 1.5, -2, 2);
+        score += gdpScore * 0.35;
+        realDataPoints++;
+        reasons.push(`Real GDP YoY: ${inputs.gdpYoY > 0 ? '+' : ''}${inputs.gdpYoY.toFixed(1)}% (${inputs.gdpYoY > 3 ? 'STRONG' : inputs.gdpYoY > 1 ? 'MODERATE' : inputs.gdpYoY > 0 ? 'WEAK' : 'CONTRACTION'})`);
+    }
+
+    // PRIMARY: NFP change month-over-month (weight 0.25)
+    if (inputs.nfpValue != null && inputs.nfpPrevValue != null && inputs.nfpPrevValue > 0) {
+        const nfpChange = inputs.nfpValue - inputs.nfpPrevValue;
+        usedInputs['nfpChange'] = nfpChange;
+        // NFP change: >200K = strong, 100-200K = moderate, <100K = weak, <0 = contraction
+        const nfpScore = clamp((nfpChange - 150) / 100, -2, 2);
+        score += nfpScore * 0.25;
+        realDataPoints++;
+        reasons.push(`NFP change: ${nfpChange > 0 ? '+' : ''}${nfpChange.toFixed(0)}K jobs (${nfpChange > 200 ? 'STRONG' : nfpChange > 100 ? 'MODERATE' : nfpChange > 0 ? 'SOFT' : 'NEGATIVE'})`);
+    }
+
+    // SECONDARY: Initial Claims (weight 0.15) — inverse: low claims = strong growth
+    if (inputs.initialClaims != null) {
+        usedInputs['initialClaims'] = inputs.initialClaims;
+        // Claims: <220K = very strong, 220-280K = normal, >280K = weakening, >350K = stress
+        const claimsScore = clamp((250 - inputs.initialClaims) / 50, -2, 2);
+        score += claimsScore * 0.15;
+        realDataPoints++;
+        reasons.push(`Initial Claims: ${inputs.initialClaims.toFixed(0)}K (${inputs.initialClaims < 220 ? 'STRONG' : inputs.initialClaims < 280 ? 'NORMAL' : 'ELEVATED'})`);
+    }
+
+    // SECONDARY: Consumer Sentiment (weight 0.10)
+    if (inputs.consumerSentiment != null) {
+        usedInputs['consumerSentiment'] = inputs.consumerSentiment;
+        // UMCSENT: historical avg ~85, >90 = optimistic, <70 = pessimistic
+        const sentScore = clamp((inputs.consumerSentiment - 80) / 15, -2, 2);
+        score += sentScore * 0.10;
+        realDataPoints++;
+        reasons.push(`Consumer Sentiment: ${inputs.consumerSentiment.toFixed(1)}`);
+    }
+
+    // TERTIARY FALLBACK: Fear/Greed (weight 0.10, only if lacking real data)
+    if (realDataPoints < 2 && inputs.fearGreed?.value != null) {
         const fg = inputs.fearGreed.value;
         usedInputs['fearGreed'] = fg;
-        const fgScore = (fg - 50) / 25; // -2 to +2 range
-        score += fgScore * 0.5;
-        dataPoints++;
-        reasons.push(`Fear/Greed ${fg} (${inputs.fearGreed.classification})`);
+        const fgScore = (fg - 50) / 25;
+        score += fgScore * 0.10;
+        proxyDataPoints++;
+        reasons.push(`Fear/Greed fallback: ${fg} (${inputs.fearGreed.classification})`);
     }
 
-    // Market breadth (adv/dec ratio)
-    if (inputs.advDecRatio != null && inputs.advDecRatio > 0) {
+    // TERTIARY FALLBACK: Market breadth (weight 0.05, only if lacking real data)
+    if (realDataPoints < 2 && inputs.advDecRatio != null && inputs.advDecRatio > 0) {
         usedInputs['advDecRatio'] = inputs.advDecRatio;
         const breadthScore = clamp((inputs.advDecRatio - 1) * 2, -2, 2);
-        score += breadthScore * 0.3;
-        dataPoints++;
-        reasons.push(`Adv/Dec ratio: ${inputs.advDecRatio.toFixed(2)}`);
+        score += breadthScore * 0.05;
+        proxyDataPoints++;
+        reasons.push(`Breadth fallback: Adv/Dec ${inputs.advDecRatio.toFixed(2)}`);
     }
 
-    // Market avg change
-    if (inputs.marketAvgChange != null) {
-        usedInputs['marketAvgChange'] = inputs.marketAvgChange;
-        const changeScore = clamp(inputs.marketAvgChange / 1.5, -2, 2);
-        score += changeScore * 0.2;
-        dataPoints++;
-        reasons.push(`Market avg change: ${inputs.marketAvgChange > 0 ? '+' : ''}${inputs.marketAvgChange.toFixed(2)}%`);
-    }
-
-    if (dataPoints === 0) {
-        confidence = 'UNAVAILABLE';
-        reasons.push('No growth data available - need PMI/NFP integration');
-    } else if (dataPoints < 2) {
+    // Confidence assessment
+    if (realDataPoints >= 3) {
+        confidence = 'OK';
+    } else if (realDataPoints >= 1) {
         confidence = 'PARTIAL';
-        reasons.push('Limited growth proxies - consider adding economic data');
+        reasons.push(`${realDataPoints} real data source(s) — add more FRED series for full accuracy`);
+    } else if (proxyDataPoints > 0) {
+        confidence = 'STALE';
+        reasons.push('Using market proxies only — FRED data unavailable');
     } else {
-        confidence = 'PARTIAL'; // Still proxies, not real data
+        confidence = 'UNAVAILABLE';
+        reasons.push('No growth data available');
     }
 
     score = clamp(score, -2, 2);
@@ -247,44 +310,78 @@ function calculateGrowthAxis(inputs: MacroInputs): AxisScore {
 }
 
 /**
- * I (Inflation) - Using yield curve and breakevens as proxies
- * Real implementation needs CPI/PCE integration
+ * I (Inflation) - Real inflation data from FRED
+ * Primary: CPI YoY, Core PCE YoY
+ * Secondary: 5Y Breakeven inflation (market-implied)
+ * Tertiary: Yield curve, 10Y yield (fallback only)
  */
 function calculateInflationAxis(inputs: MacroInputs): AxisScore {
     const reasons: string[] = [];
     const usedInputs: Record<string, number | string | null> = {};
     let score = 0;
-    let dataPoints = 0;
-    let confidence: ConfidenceLevel = 'PARTIAL';
+    let realDataPoints = 0;
+    let proxyDataPoints = 0;
+    let confidence: ConfidenceLevel = 'OK';
 
-    // Yield curve as inflation expectation proxy
-    if (inputs.yieldCurve != null) {
+    // PRIMARY: CPI Year-over-Year (weight 0.35)
+    if (inputs.cpiYoY != null) {
+        usedInputs['cpiYoY'] = inputs.cpiYoY;
+        // Fed target = 2%. >3% = elevated, >5% = high, <1% = disinflation
+        const cpiScore = clamp((inputs.cpiYoY - 2.5) / 1.5, -2, 2);
+        score += cpiScore * 0.35;
+        realDataPoints++;
+        reasons.push(`CPI YoY: ${inputs.cpiYoY.toFixed(1)}% (${inputs.cpiYoY > 4 ? 'HIGH' : inputs.cpiYoY > 2.5 ? 'ABOVE TARGET' : inputs.cpiYoY > 1.5 ? 'AT TARGET' : 'LOW'})`);
+    }
+
+    // PRIMARY: Core PCE YoY — Fed's preferred measure (weight 0.30)
+    if (inputs.corePceYoY != null) {
+        usedInputs['corePceYoY'] = inputs.corePceYoY;
+        const pceScore = clamp((inputs.corePceYoY - 2.5) / 1.5, -2, 2);
+        score += pceScore * 0.30;
+        realDataPoints++;
+        reasons.push(`Core PCE YoY: ${inputs.corePceYoY.toFixed(1)}% (Fed target: 2%)`);
+    }
+
+    // SECONDARY: 5Y Breakeven inflation — market-implied (weight 0.20)
+    if (inputs.breakeven5y != null) {
+        usedInputs['breakeven5y'] = inputs.breakeven5y;
+        // Breakeven: ~2.0-2.5% = anchored, >3% = unanchored, <1.5% = deflation fear
+        const beScore = clamp((inputs.breakeven5y - 2.2) / 0.8, -2, 2);
+        score += beScore * 0.20;
+        realDataPoints++;
+        reasons.push(`5Y Breakeven: ${inputs.breakeven5y.toFixed(2)}% (${inputs.breakeven5y > 2.8 ? 'UNANCHORED' : inputs.breakeven5y > 2 ? 'ANCHORED' : 'LOW'})`);
+    }
+
+    // TERTIARY FALLBACK: Yield curve (weight 0.10, only if lacking real data)
+    if (realDataPoints < 2 && inputs.yieldCurve != null) {
         usedInputs['yieldCurve'] = inputs.yieldCurve;
-        // Steep curve = growth/inflation expectations up
-        // Inverted = recession/disinflation
         const curveScore = clamp(inputs.yieldCurve / 1.0, -2, 2);
-        score += curveScore * 0.6;
-        dataPoints++;
-        reasons.push(`Yield curve (10Y-2Y): ${inputs.yieldCurve > 0 ? '+' : ''}${inputs.yieldCurve.toFixed(2)}%`);
+        score += curveScore * 0.10;
+        proxyDataPoints++;
+        reasons.push(`Yield curve fallback: ${inputs.yieldCurve > 0 ? '+' : ''}${inputs.yieldCurve.toFixed(2)}%`);
     }
 
-    // 10Y yield level as inflation proxy
-    if (inputs.treasury10y != null && inputs.treasury10y > 0) {
+    // TERTIARY FALLBACK: 10Y yield level (weight 0.05, only if lacking real data)
+    if (realDataPoints < 2 && inputs.treasury10y != null && inputs.treasury10y > 0) {
         usedInputs['treasury10y'] = inputs.treasury10y;
-        // Historical average ~3.5%, >4.5% = high inflation regime
         const yieldScore = clamp((inputs.treasury10y - 3.5) / 1.5, -2, 2);
-        score += yieldScore * 0.4;
-        dataPoints++;
-        reasons.push(`10Y yield: ${inputs.treasury10y.toFixed(2)}%`);
+        score += yieldScore * 0.05;
+        proxyDataPoints++;
+        reasons.push(`10Y yield fallback: ${inputs.treasury10y.toFixed(2)}%`);
     }
 
-    if (dataPoints === 0) {
+    // Confidence assessment
+    if (realDataPoints >= 2) {
+        confidence = 'OK';
+    } else if (realDataPoints >= 1) {
+        confidence = 'PARTIAL';
+        reasons.push('Partial inflation data — waiting for more FRED updates');
+    } else if (proxyDataPoints > 0) {
+        confidence = 'STALE';
+        reasons.push('Using yield proxies only — CPI/PCE data unavailable');
+    } else {
         confidence = 'UNAVAILABLE';
         reasons.push('No inflation data available');
-    } else if (dataPoints < 2) {
-        confidence = 'PARTIAL';
-    } else {
-        confidence = 'PARTIAL'; // Still proxies
     }
 
     score = clamp(score, -2, 2);
@@ -302,53 +399,102 @@ function calculateInflationAxis(inputs: MacroInputs): AxisScore {
 }
 
 /**
- * L (Liquidity) - MOST IMPORTANT AXIS
- * Using Fed proxy signals until direct Fed balance sheet integration
+ * L (Liquidity) - MOST IMPORTANT AXIS — Real Fed data from FRED
+ * Net Liquidity ≈ Fed Balance Sheet − Reverse Repo − TGA
+ * Primary: WALCL (Fed BS) change, RRPONTSYD, TGA
+ * Secondary: M2 Money Supply
+ * Tertiary fallback: VIX (stress indicator only, NOT liquidity proxy)
  */
 function calculateLiquidityAxis(inputs: MacroInputs): AxisScore {
     const reasons: string[] = [];
     const usedInputs: Record<string, number | string | null> = {};
     let score = 0;
-    let dataPoints = 0;
-    let confidence: ConfidenceLevel = 'PARTIAL';
+    let realDataPoints = 0;
+    let proxyDataPoints = 0;
+    let confidence: ConfidenceLevel = 'OK';
 
-    // VIX as liquidity stress proxy (inverse)
-    if (inputs.vix != null && inputs.vix > 0) {
-        usedInputs['vix'] = inputs.vix;
-        // VIX < 15 = ample liquidity, VIX > 25 = liquidity tightening
+    // PRIMARY: Fed Balance Sheet change (weight 0.35)
+    // Net liquidity = WALCL − RRP − TGA
+    // If both current and previous are available, calculate change
+    if (inputs.fedBalanceSheet != null) {
+        usedInputs['fedBalanceSheet'] = inputs.fedBalanceSheet;
+
+        if (inputs.fedBalanceSheetPrev != null && inputs.fedBalanceSheetPrev > 0) {
+            const bsChange = ((inputs.fedBalanceSheet - inputs.fedBalanceSheetPrev) / inputs.fedBalanceSheetPrev) * 100;
+            usedInputs['fedBSChange%'] = bsChange;
+            // BS expanding = liquidity injection, contracting = drainage
+            // Typical QE = +0.5%/week, QT = -0.2%/week
+            const bsScore = clamp(bsChange / 0.3, -2, 2);
+            score += bsScore * 0.35;
+            realDataPoints++;
+            reasons.push(`Fed BS: $${(inputs.fedBalanceSheet / 1e6).toFixed(2)}T (${bsChange > 0 ? '+' : ''}${bsChange.toFixed(2)}% chg → ${bsChange > 0.1 ? 'EXPANDING' : bsChange < -0.1 ? 'CONTRACTING' : 'FLAT'})`);
+        } else {
+            // Use absolute level — compare to historical norms
+            // Post-2020 norm: ~$7-8T, pre-2020: ~$4T
+            const levelScore = clamp((inputs.fedBalanceSheet / 1e6 - 7) / 1.5, -2, 2);
+            score += levelScore * 0.20;
+            realDataPoints++;
+            reasons.push(`Fed BS level: $${(inputs.fedBalanceSheet / 1e6).toFixed(2)}T`);
+        }
+    }
+
+    // PRIMARY: Reverse Repo — draining = liquidity releasing (weight 0.25)
+    if (inputs.reverseRepo != null) {
+        usedInputs['reverseRepo'] = inputs.reverseRepo;
+        // RRP declining = liquidity moving into market (positive)
+        // RRP rising = liquidity parking at Fed (negative for markets)
+        // Post-2022: RRP went from $2.5T to ~$0.5T (bullish drain)
+        // Score based on absolute level: <$500B = depleted (neutral), $500B-$1.5T = draining, >$1.5T = absorbing
+        const rrpScore = clamp((800 - inputs.reverseRepo) / 500, -2, 2);
+        score += rrpScore * 0.25;
+        realDataPoints++;
+        reasons.push(`Reverse Repo: $${inputs.reverseRepo.toFixed(0)}B (${inputs.reverseRepo < 300 ? 'DEPLETED' : inputs.reverseRepo < 800 ? 'LOW' : inputs.reverseRepo < 1500 ? 'MODERATE' : 'HIGH — absorbing liquidity'})`);
+    }
+
+    // SECONDARY: TGA (Treasury General Account) — high TGA drains, low TGA releases (weight 0.15)
+    if (inputs.tga != null) {
+        usedInputs['tga'] = inputs.tga;
+        // TGA normal range: $500B-$800B. Very high (>$800B) = draining. Low (<$200B) = releasing.
+        const tgaInBillions = inputs.tga / 1000;
+        const tgaScore = clamp((600 - tgaInBillions) / 300, -2, 2);
+        score += tgaScore * 0.15;
+        realDataPoints++;
+        reasons.push(`TGA: $${tgaInBillions.toFixed(0)}B (${tgaInBillions > 800 ? 'HIGH — draining' : tgaInBillions > 400 ? 'NORMAL' : 'LOW — releasing'})`);
+    }
+
+    // SECONDARY: M2 Money Supply growth (weight 0.10)
+    if (inputs.m2MoneySupply != null) {
+        usedInputs['m2MoneySupply'] = inputs.m2MoneySupply;
+        // M2 > $21T (2024 level). Growing = inflationary/liquidity positive
+        // Compare to ~$21T baseline
+        const m2Score = clamp((inputs.m2MoneySupply / 1000 - 21) / 1, -2, 2);
+        score += m2Score * 0.10;
+        realDataPoints++;
+        reasons.push(`M2: $${(inputs.m2MoneySupply / 1000).toFixed(1)}T`);
+    }
+
+    // TERTIARY FALLBACK: VIX as stress indicator (weight 0.10, reduced from 0.4)
+    // Only used when no real liquidity data is available
+    if (realDataPoints < 2 && inputs.vix != null && inputs.vix > 0) {
+        usedInputs['vix_fallback'] = inputs.vix;
         const vixScore = clamp((20 - inputs.vix) / 7, -2, 2);
-        score += vixScore * 0.4;
-        dataPoints++;
-        reasons.push(`VIX: ${inputs.vix.toFixed(1)} (${inputs.vix < 15 ? 'low' : inputs.vix < 25 ? 'moderate' : 'elevated'})`);
+        score += vixScore * 0.10;
+        proxyDataPoints++;
+        reasons.push(`VIX stress fallback: ${inputs.vix.toFixed(1)} (proxy only — NOT direct liquidity measure)`);
     }
 
-    // VIX change as liquidity momentum
-    if (inputs.vixChange != null) {
-        usedInputs['vixChange'] = inputs.vixChange;
-        const vixChangeScore = clamp(-inputs.vixChange / 5, -2, 2);
-        score += vixChangeScore * 0.3;
-        dataPoints++;
-        reasons.push(`VIX change: ${inputs.vixChange > 0 ? '+' : ''}${inputs.vixChange.toFixed(1)}%`);
-    }
-
-    // Yield curve as funding conditions proxy
-    if (inputs.yieldCurve != null) {
-        usedInputs['yieldCurve_liquidity'] = inputs.yieldCurve;
-        // Inverted curve = tighter funding
-        const curveScore = clamp(inputs.yieldCurve / 0.75, -2, 2);
-        score += curveScore * 0.3;
-        dataPoints++;
-    }
-
-    if (dataPoints === 0) {
-        confidence = 'UNAVAILABLE';
-        reasons.push('No liquidity proxies available');
-    } else if (dataPoints < 2) {
-        confidence = 'STALE';
-        reasons.push('Limited liquidity data - need Fed balance sheet');
-    } else {
+    // Confidence assessment
+    if (realDataPoints >= 3) {
+        confidence = 'OK';
+    } else if (realDataPoints >= 1) {
         confidence = 'PARTIAL';
-        reasons.push('Using proxies - integrate Fed balance sheet for full accuracy');
+        reasons.push(`${realDataPoints} real liquidity source(s) available`);
+    } else if (proxyDataPoints > 0) {
+        confidence = 'STALE';
+        reasons.push('⚠️ Using VIX as proxy — FRED liquidity data unavailable');
+    } else {
+        confidence = 'UNAVAILABLE';
+        reasons.push('No liquidity data available');
     }
 
     score = clamp(score, -2, 2);
@@ -366,41 +512,89 @@ function calculateLiquidityAxis(inputs: MacroInputs): AxisScore {
 }
 
 /**
- * C (Credit) - Using HY spread proxies
+ * C (Credit) - Real credit data from FRED
+ * Primary: BAMLH0A0HYM2 (HY OAS spread), BAMLC0A0CM (AAA spread)
+ * Secondary: STLFSI3 (Financial Stress Index), Delinquency Rate
+ * Tertiary fallback: VIX (only when no real credit data)
  */
 function calculateCreditAxis(inputs: MacroInputs): AxisScore {
     const reasons: string[] = [];
     const usedInputs: Record<string, number | string | null> = {};
     let score = 0;
-    let dataPoints = 0;
-    let confidence: ConfidenceLevel = 'PARTIAL';
+    let realDataPoints = 0;
+    let proxyDataPoints = 0;
+    let confidence: ConfidenceLevel = 'OK';
 
-    // VIX as credit stress proxy (correlated with HY spreads)
-    if (inputs.vix != null && inputs.vix > 0) {
-        usedInputs['vix_credit'] = inputs.vix;
-        // VIX < 18 = healthy credit, VIX > 30 = credit stress
+    // PRIMARY: HY OAS Spread (weight 0.40) — THE key credit indicator
+    if (inputs.hySpread != null) {
+        usedInputs['hySpread'] = inputs.hySpread;
+        // HY OAS: <3% = very tight (risk-on), 3-4% = normal, 4-6% = widening, >6% = stress, >8% = crisis
+        const hyScore = clamp((4.0 - inputs.hySpread) / 1.5, -2, 2);
+        score += hyScore * 0.40;
+        realDataPoints++;
+        reasons.push(`HY Spread: ${inputs.hySpread.toFixed(2)}% (${inputs.hySpread < 3 ? 'TIGHT' : inputs.hySpread < 4.5 ? 'NORMAL' : inputs.hySpread < 6 ? 'WIDENING' : 'STRESS'})`);
+    }
+
+    // PRIMARY: AAA Spread (weight 0.20) — investment grade stress
+    if (inputs.aaaSpread != null) {
+        usedInputs['aaaSpread'] = inputs.aaaSpread;
+        // AAA OAS: <0.8% = very tight, 0.8-1.2% = normal, >1.5% = stress
+        const aaaScore = clamp((1.0 - inputs.aaaSpread) / 0.5, -2, 2);
+        score += aaaScore * 0.20;
+        realDataPoints++;
+        reasons.push(`AAA Spread: ${inputs.aaaSpread.toFixed(2)}%`);
+    }
+
+    // SECONDARY: Financial Stress Index (weight 0.20)
+    if (inputs.financialStressIndex != null) {
+        usedInputs['financialStressIndex'] = inputs.financialStressIndex;
+        // STLFSI3: 0 = average, negative = below-avg stress (good), >1 = elevated, >2 = crisis
+        const fsiScore = clamp(-inputs.financialStressIndex / 1.0, -2, 2);
+        score += fsiScore * 0.20;
+        realDataPoints++;
+        reasons.push(`Fin Stress Index: ${inputs.financialStressIndex.toFixed(2)} (${inputs.financialStressIndex < -0.5 ? 'CALM' : inputs.financialStressIndex < 0.5 ? 'NORMAL' : inputs.financialStressIndex < 1.5 ? 'ELEVATED' : 'CRISIS'})`);
+    }
+
+    // SECONDARY: Delinquency Rate (weight 0.10)
+    if (inputs.delinquencyRate != null) {
+        usedInputs['delinquencyRate'] = inputs.delinquencyRate;
+        // Historical avg ~2-3%, >4% = concerning, >5% = stress
+        const delScore = clamp((3.0 - inputs.delinquencyRate) / 1.0, -2, 2);
+        score += delScore * 0.10;
+        realDataPoints++;
+        reasons.push(`Delinquency: ${inputs.delinquencyRate.toFixed(1)}%`);
+    }
+
+    // TERTIARY FALLBACK: VIX (weight 0.10, only when no real credit data)
+    if (realDataPoints < 1 && inputs.vix != null && inputs.vix > 0) {
+        usedInputs['vix_credit_fallback'] = inputs.vix;
         const vixScore = clamp((20 - inputs.vix) / 8, -2, 2);
-        score += vixScore * 0.5;
-        dataPoints++;
-        reasons.push(`Credit proxy (VIX): ${inputs.vix < 18 ? 'healthy' : inputs.vix < 25 ? 'normal' : 'stressed'}`);
+        score += vixScore * 0.10;
+        proxyDataPoints++;
+        reasons.push(`VIX credit fallback: ${inputs.vix.toFixed(1)} (proxy only — NOT credit spread)`);
     }
 
-    // HY spread proxy if available
-    if (inputs.hySpreadProxy != null) {
+    // Legacy fallback for hySpreadProxy (bps from ETF)
+    if (realDataPoints < 1 && inputs.hySpreadProxy != null) {
         usedInputs['hySpreadProxy'] = inputs.hySpreadProxy;
-        // HY OAS < 350bps = tight, > 500bps = wide
         const spreadScore = clamp((400 - inputs.hySpreadProxy) / 150, -2, 2);
-        score += spreadScore * 0.5;
-        dataPoints++;
-        reasons.push(`HY spread proxy: ${inputs.hySpreadProxy}bps`);
+        score += spreadScore * 0.10;
+        proxyDataPoints++;
+        reasons.push(`HY ETF proxy: ${inputs.hySpreadProxy}bps`);
     }
 
-    if (dataPoints === 0) {
+    // Confidence assessment
+    if (realDataPoints >= 2) {
+        confidence = 'OK';
+    } else if (realDataPoints >= 1) {
+        confidence = 'PARTIAL';
+        reasons.push('Partial credit data from FRED');
+    } else if (proxyDataPoints > 0) {
+        confidence = 'STALE';
+        reasons.push('⚠️ Using VIX/ETF proxy — real HY OAS data unavailable');
+    } else {
         confidence = 'UNAVAILABLE';
         reasons.push('No credit data available');
-    } else {
-        confidence = 'PARTIAL';
-        reasons.push('Using VIX as credit proxy - integrate HY OAS for accuracy');
     }
 
     score = clamp(score, -2, 2);

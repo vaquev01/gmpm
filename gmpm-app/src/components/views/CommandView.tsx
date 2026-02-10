@@ -11,7 +11,8 @@ import {
 } from '@/lib/signalTracker';
 import type { RegimeSnapshot, AxisScore, GateSummary, TradeContext } from '@/lib/regimeEngine';
 import { evaluateGates } from '@/lib/regimeEngine';
-import { addSignal, calculateStats, type PerformanceStats } from '@/lib/signalHistory';
+import { addSignal, calculateStats, updateSignalStatus, type PerformanceStats } from '@/lib/signalHistory';
+import { getPortfolioManager } from '@/lib/portfolioManager';
 import {
     Zap, CheckCircle2, XCircle,
     Brain, Globe, Shield, Activity, TrendingUp, Search, Layers, RefreshCw, X, Target, TrendingDown,
@@ -28,6 +29,9 @@ import {
     TableHeader,
     TableRow,
 } from '@/components/ui/table';
+import { TierScanner } from '@/components/views/TierScanner';
+import type { ActionDecision } from '@/lib/decisionEngine';
+import { serverTrackSignal, serverUpdatePrices, triggerServerMonitor } from '@/lib/signalBridge';
 
 // --- TYPES ---
 
@@ -413,30 +417,30 @@ const InstitutionalGatesPanel = ({
     } | null;
     microSetups: { action: 'EXECUTE' | 'WAIT' | 'AVOID'; setup: unknown }[];
 }) => {
-    // Calculate gate statuses
+    // Calculate gate statuses - show WARN instead of LOADING when data unavailable after timeout
     const macroGate = {
-        status: !regime ? 'LOADING' : 
+        status: !regime ? 'WARN' : 
             regime.regimeConfidence === 'UNAVAILABLE' ? 'FAIL' :
             regime.axes.L.direction === '↓↓' || regime.axes.C.direction === '↓↓' ? 'FAIL' :
             regime.regimeConfidence === 'OK' ? 'PASS' : 'WARN',
         label: 'MACRO',
-        detail: regime ? `${regime.regime} (${regime.regimeConfidence})` : 'Loading...',
+        detail: regime ? `${regime.regime} (${regime.regimeConfidence})` : 'Unavailable',
     };
 
     const mesoGate = {
-        status: !mesoData ? 'LOADING' :
+        status: !mesoData ? 'WARN' :
             mesoData.allowedInstruments.length === 0 ? 'FAIL' :
             mesoData.volatilityContext === 'HIGH' ? 'WARN' : 'PASS',
         label: 'MESO',
-        detail: mesoData ? `${mesoData.allowedInstruments.length} allowed, ${mesoData.prohibitedInstruments.length} blocked` : 'Loading...',
+        detail: mesoData ? `${mesoData.allowedInstruments.length} allowed, ${mesoData.prohibitedInstruments.length} blocked` : 'Unavailable',
     };
 
     const executeCount = microSetups.filter(s => s.action === 'EXECUTE').length;
     const microGate = {
-        status: microSetups.length === 0 ? 'LOADING' :
+        status: microSetups.length === 0 ? 'WARN' :
             executeCount === 0 ? 'WARN' : 'PASS',
         label: 'MICRO',
-        detail: `${executeCount} ready, ${microSetups.filter(s => s.action === 'WAIT').length} waiting`,
+        detail: microSetups.length === 0 ? 'Scanning...' : `${executeCount} ready, ${microSetups.filter(s => s.action === 'WAIT').length} waiting`,
     };
 
     const now = new Date();
@@ -1141,13 +1145,29 @@ const AxisBadge = ({ axis }: { axis: AxisScore }) => {
 };
 
 const RegimePanel = ({ regime, loading }: { regime: RegimeSnapshot | null; loading: boolean }) => {
-    if (loading || !regime) {
+    if (loading) {
         return (
             <Card className="bg-gray-900/50 border-gray-800 mb-4">
                 <CardContent className="p-4">
                     <div className="flex items-center gap-2 text-gray-500">
                         <RefreshCw className="w-4 h-4 animate-spin" />
                         <span className="text-xs">Loading regime analysis...</span>
+                    </div>
+                </CardContent>
+            </Card>
+        );
+    }
+
+    if (!regime) {
+        return (
+            <Card className="bg-gray-900/50 border-gray-800 mb-4">
+                <CardContent className="p-4">
+                    <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2 text-amber-500">
+                            <AlertTriangle className="w-4 h-4" />
+                            <span className="text-xs">Regime data unavailable - using defaults</span>
+                        </div>
+                        <span className="text-[10px] text-gray-500">NEUTRAL assumed</span>
                     </div>
                 </CardContent>
             </Card>
@@ -1423,7 +1443,7 @@ const CurrencyStrengthPanel = ({ assets, macro }: { assets: ScoredAsset[]; macro
 
     // Sort by strength
     const sorted = Object.entries(currencies)
-        .filter(([_, v]) => v.pairs > 0)
+        .filter(([, v]) => v.pairs > 0)
         .sort((a, b) => b[1].strength - a[1].strength);
 
     const getStrengthColor = (s: number) => {
@@ -1631,10 +1651,14 @@ const AssetDetailPanel = ({
     asset,
     onClose,
     onExecute,
+    executionEnabled,
+    executionDisabledReason,
 }: {
     asset: ScoredAsset;
     onClose: () => void;
     onExecute: (asset: ScoredAsset) => void;
+    executionEnabled: boolean;
+    executionDisabledReason: string | null;
 }) => {
     const [smc, setSmc] = useState<SmcApiResponse | null>(null);
     const [smcLoading, setSmcLoading] = useState(true);
@@ -1642,6 +1666,50 @@ const AssetDetailPanel = ({
     const [flow, setFlow] = useState<OrderFlowItem | null>(null);
     const [flowLoading, setFlowLoading] = useState(asset.assetClass === 'crypto');
     const [flowError, setFlowError] = useState<string | null>(null);
+
+    const [liqMap, setLiqMap] = useState<{
+        marketDirection?: 'SEEKING_BUYSIDE' | 'SEEKING_SELLSIDE' | 'BALANCED';
+        currentPrice?: number;
+        buySideLiquidity?: { level: number; strength: number }[];
+        sellSideLiquidity?: { level: number; strength: number }[];
+        poc?: { price: number; volume: number };
+        valueArea?: { high: number; low: number };
+        timing?: { nextLikelyWindow?: string; avgTimeToLiquidityGrab?: string };
+    } | null>(null);
+    const [liqMapLoading, setLiqMapLoading] = useState(false);
+    const [liqMapError, setLiqMapError] = useState<string | null>(null);
+
+    const [fxPair, setFxPair] = useState<{
+        symbol: string;
+        direction: 'LONG' | 'SHORT';
+        confidence: 'HIGH' | 'MEDIUM' | 'LOW';
+        differential: number;
+        tradePlan?: {
+            entryZone: { from: number; to: number };
+            stopLoss: number;
+            takeProfit: number;
+            riskReward: number;
+            horizon: string;
+            executionWindow: string;
+        };
+    } | null>(null);
+    const [fxLoading, setFxLoading] = useState(false);
+    const [fxError, setFxError] = useState<string | null>(null);
+
+    const isRecord = useCallback((v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null, []);
+
+    const parseLiqLevels = useCallback((v: unknown): { level: number; strength: number }[] | undefined => {
+        if (!Array.isArray(v)) return undefined;
+        const out: { level: number; strength: number }[] = [];
+        for (const it of v) {
+            if (!isRecord(it)) continue;
+            const level = typeof it.level === 'number' ? it.level : null;
+            const strength = typeof it.strength === 'number' ? it.strength : null;
+            if (level === null || strength === null) continue;
+            out.push({ level, strength });
+        }
+        return out.length ? out : undefined;
+    }, [isRecord]);
 
     useEffect(() => {
         let alive = true;
@@ -1687,8 +1755,139 @@ const AssetDetailPanel = ({
         };
     }, [asset.symbol, asset.assetClass, asset.displaySymbol]);
 
+    useEffect(() => {
+        let alive = true;
+        const ac = new AbortController();
+
+        const initTimer = setTimeout(() => {
+            if (!alive) return;
+
+            setLiqMapLoading(true);
+            setLiqMapError(null);
+            setLiqMap(null);
+            fetch(`/api/liquidity-map?symbol=${encodeURIComponent(asset.symbol)}&class=${encodeURIComponent(asset.assetClass)}`, { signal: ac.signal })
+                .then((r) => r.json())
+                .then((j: { success: boolean; data?: unknown; error?: string }) => {
+                    if (!alive) return;
+                    if (j && j.success && isRecord(j.data)) {
+                        const d = j.data;
+                        const marketDirection = d.marketDirection === 'SEEKING_BUYSIDE' || d.marketDirection === 'SEEKING_SELLSIDE' || d.marketDirection === 'BALANCED'
+                            ? d.marketDirection
+                            : undefined;
+                        const currentPrice = typeof d.currentPrice === 'number' ? d.currentPrice : undefined;
+                        const buySideLiquidity = parseLiqLevels(d.buySideLiquidity);
+                        const sellSideLiquidity = parseLiqLevels(d.sellSideLiquidity);
+                        const poc = isRecord(d.poc) && typeof d.poc.price === 'number' && typeof d.poc.volume === 'number'
+                            ? { price: d.poc.price, volume: d.poc.volume }
+                            : undefined;
+                        const valueArea = isRecord(d.valueArea) && typeof d.valueArea.high === 'number' && typeof d.valueArea.low === 'number'
+                            ? { high: d.valueArea.high, low: d.valueArea.low }
+                            : undefined;
+                        const timing = isRecord(d.timing)
+                            ? {
+                                nextLikelyWindow: typeof d.timing.nextLikelyWindow === 'string' ? d.timing.nextLikelyWindow : undefined,
+                                avgTimeToLiquidityGrab: typeof d.timing.avgTimeToLiquidityGrab === 'string' ? d.timing.avgTimeToLiquidityGrab : undefined,
+                            }
+                            : undefined;
+
+                        setLiqMap({
+                            marketDirection,
+                            currentPrice,
+                            buySideLiquidity,
+                            sellSideLiquidity,
+                            poc,
+                            valueArea,
+                            timing,
+                        });
+                    } else {
+                        setLiqMapError(j?.error || 'Failed to load liquidity map');
+                    }
+                })
+                .catch((e) => {
+                    if (!alive) return;
+                    if (e && typeof e === 'object' && 'name' in e && (e as { name?: unknown }).name === 'AbortError') return;
+                    setLiqMapError(e instanceof Error ? e.message : 'Failed to load liquidity map');
+                })
+                .finally(() => {
+                    if (!alive) return;
+                    setLiqMapLoading(false);
+                });
+
+            const isFx = asset.symbol.includes('=X') || asset.assetClass === 'forex';
+            setFxLoading(false);
+            setFxError(null);
+            setFxPair(null);
+            if (isFx) {
+                setFxLoading(true);
+                fetch('/api/currency-strength', { signal: ac.signal })
+                    .then((r) => r.json())
+                    .then((j: { success: boolean; bestPairs?: unknown; error?: string }) => {
+                        if (!alive) return;
+                        if (!j || !j.success || !Array.isArray(j.bestPairs)) {
+                            setFxError(j?.error || 'Failed to load currency strength');
+                            return;
+                        }
+                        const match = j.bestPairs.find((p) => isRecord(p) && p.symbol === asset.symbol);
+                        if (!match || !isRecord(match)) return;
+                        const direction = match.direction === 'LONG' || match.direction === 'SHORT' ? match.direction : null;
+                        const confidence = match.confidence === 'HIGH' || match.confidence === 'MEDIUM' || match.confidence === 'LOW' ? match.confidence : null;
+                        const differential = typeof match.differential === 'number' ? match.differential : 0;
+                        const tradePlan = isRecord(match.tradePlan)
+                            && isRecord(match.tradePlan.entryZone)
+                            && typeof match.tradePlan.entryZone.from === 'number'
+                            && typeof match.tradePlan.entryZone.to === 'number'
+                            && typeof match.tradePlan.stopLoss === 'number'
+                            && typeof match.tradePlan.takeProfit === 'number'
+                            && typeof match.tradePlan.riskReward === 'number'
+                            && typeof match.tradePlan.horizon === 'string'
+                            && typeof match.tradePlan.executionWindow === 'string'
+                            ? {
+                                entryZone: { from: match.tradePlan.entryZone.from, to: match.tradePlan.entryZone.to },
+                                stopLoss: match.tradePlan.stopLoss,
+                                takeProfit: match.tradePlan.takeProfit,
+                                riskReward: match.tradePlan.riskReward,
+                                horizon: match.tradePlan.horizon,
+                                executionWindow: match.tradePlan.executionWindow,
+                            }
+                            : undefined;
+
+                        if (direction && confidence) {
+                            setFxPair({
+                                symbol: asset.symbol,
+                                direction,
+                                confidence,
+                                differential,
+                                tradePlan,
+                            });
+                        }
+                    })
+                    .catch((e) => {
+                        if (!alive) return;
+                        if (e && typeof e === 'object' && 'name' in e && (e as { name?: unknown }).name === 'AbortError') return;
+                        setFxError(e instanceof Error ? e.message : 'Failed to load currency strength');
+                    })
+                    .finally(() => {
+                        if (!alive) return;
+                        setFxLoading(false);
+                    });
+            }
+        }, 0);
+
+        return () => {
+            alive = false;
+            clearTimeout(initTimer);
+            ac.abort();
+        };
+    }, [asset.symbol, asset.assetClass, isRecord, parseLiqLevels]);
+
     const liq = computeLiquidityMetrics(asset, flow);
-    const isTradeable = asset.signal !== 'WAIT' && asset.quality?.status === 'OK';
+    const canAttempt = asset.signal !== 'WAIT' && asset.quality?.status === 'OK';
+    const allowAuditClick =
+        !executionEnabled
+        && typeof executionDisabledReason === 'string'
+        && (executionDisabledReason === 'MANUAL_KILL_SWITCH'
+            || executionDisabledReason.startsWith('RISK_HALTED'));
+    const executeDisabled = !canAttempt || (!executionEnabled && !allowAuditClick);
     const finalScore = typeof asset.trustScore === 'number' && Number.isFinite(asset.trustScore) ? asset.trustScore : asset.score;
     const instrumentType = asset.symbol.endsWith('-USD') ? 'CRYPTO'
         : asset.symbol.endsWith('=X') ? 'FX'
@@ -1852,6 +2051,9 @@ const AssetDetailPanel = ({
                                         {flowLoading ? 'loading...' : flowError ? 'error' : 'ok'}
                                     </div>
                                 </div>
+                                <div className="mt-1 text-[9px] text-amber-500/80 font-mono bg-amber-500/5 border border-amber-500/10 rounded px-1.5 py-0.5">
+                                    Binance only — Order Flow unavailable for Forex, Equities &amp; Commodities
+                                </div>
                                 {flowError ? (
                                     <div className="text-[11px] font-mono text-gray-500 mt-2">{flowError}</div>
                                 ) : flow ? (
@@ -1883,6 +2085,99 @@ const AssetDetailPanel = ({
                                 </div>
                             </div>
                         ) : null}
+                    </div>
+                </div>
+
+                <div className="space-y-3">
+                    <div className="flex items-center gap-2 text-cyan-400 text-xs font-bold uppercase tracking-wider">
+                        <Shield className="w-4 h-4" /> Confluence (Liquidity + FX)
+                    </div>
+                    <div className="bg-gray-950/40 border border-gray-800 rounded p-3">
+                        <div className="flex items-center justify-between">
+                            <div className="text-[10px] text-gray-500 uppercase font-bold">Integrated snapshot</div>
+                            <div className="text-[10px] font-mono text-gray-500">
+                                {liqMapLoading ? 'liquidity: loading...' : liqMapError ? 'liquidity: error' : 'liquidity: ok'}{' | '}
+                                {asset.symbol.includes('=X') || asset.assetClass === 'forex' ? (fxLoading ? 'fx: loading...' : fxError ? 'fx: error' : 'fx: ok') : 'fx: n/a'}
+                            </div>
+                        </div>
+
+                        {liqMapError ? (
+                            <div className="mt-2 text-[11px] font-mono text-gray-500 break-words">{liqMapError}</div>
+                        ) : null}
+
+                        {(asset.symbol.includes('=X') || asset.assetClass === 'forex') && fxError ? (
+                            <div className="mt-2 text-[11px] font-mono text-gray-500 break-words">{fxError}</div>
+                        ) : null}
+
+                        {(() => {
+                            const sig = asset.signal;
+                            const liqBias = liqMap?.marketDirection === 'SEEKING_SELLSIDE'
+                                ? 'LONG'
+                                : liqMap?.marketDirection === 'SEEKING_BUYSIDE'
+                                    ? 'SHORT'
+                                    : null;
+                            const fxBias = fxPair?.direction ?? null;
+                            const mesoBias = asset.mesoDirection ?? null;
+                            const score =
+                                (liqBias ? (liqBias === sig ? 1 : -1) : 0) +
+                                (fxBias ? (fxBias === sig ? 1 : -1) : 0) +
+                                (mesoBias ? (mesoBias === sig ? 1 : -1) : 0);
+                            const status = score >= 2 ? 'ALIGNED' : score <= -1 ? 'CONFLICTING' : 'MIXED';
+                            const statusClass = status === 'ALIGNED'
+                                ? 'text-green-300 bg-green-950/20 border-green-900/40'
+                                : status === 'CONFLICTING'
+                                    ? 'text-red-300 bg-red-950/20 border-red-900/40'
+                                    : 'text-yellow-300 bg-yellow-950/20 border-yellow-900/40';
+
+                            const nearestBuy = liqMap?.buySideLiquidity?.[0]?.level;
+                            const nearestSell = liqMap?.sellSideLiquidity?.[0]?.level;
+
+                            return (
+                                <div className="mt-3 space-y-2">
+                                    <div className={cn('inline-flex items-center gap-2 text-[10px] font-mono px-2 py-1 rounded border', statusClass)}>
+                                        <span className="font-bold">{status}</span>
+                                        <span>score={score}</span>
+                                    </div>
+
+                                    <div className="grid grid-cols-1 gap-2 text-[11px] font-mono">
+                                        <div className="flex justify-between">
+                                            <span className="text-gray-500">Scan signal</span>
+                                            <span className="text-gray-200">{asset.signal} ({asset.conf})</span>
+                                        </div>
+                                        <div className="flex justify-between">
+                                            <span className="text-gray-500">Meso bias</span>
+                                            <span className="text-gray-200">{mesoBias || 'N/A'}</span>
+                                        </div>
+                                        <div className="flex justify-between">
+                                            <span className="text-gray-500">Liquidity bias</span>
+                                            <span className="text-gray-200">{liqBias || 'N/A'}{liqMap?.marketDirection ? ` (${liqMap.marketDirection})` : ''}</span>
+                                        </div>
+                                        <div className="flex justify-between">
+                                            <span className="text-gray-500">Nearest liq</span>
+                                            <span className="text-gray-200">B={nearestBuy ? Number(nearestBuy).toFixed(2) : 'N/A'} S={nearestSell ? Number(nearestSell).toFixed(2) : 'N/A'}</span>
+                                        </div>
+                                        {(asset.symbol.includes('=X') || asset.assetClass === 'forex') && (
+                                            <div className="flex justify-between">
+                                                <span className="text-gray-500">FX strength</span>
+                                                <span className="text-gray-200">{fxPair ? `${fxPair.direction} diff=${fxPair.differential} conf=${fxPair.confidence}` : 'N/A'}</span>
+                                            </div>
+                                        )}
+                                    </div>
+
+                                    {fxPair?.tradePlan ? (
+                                        <div className="mt-2 grid grid-cols-1 gap-2 text-[11px] font-mono">
+                                            <div className="text-[10px] text-gray-500 uppercase font-bold">FX trade plan</div>
+                                            <div className="flex justify-between"><span className="text-gray-500">Entry</span><span className="text-gray-200">{fxPair.tradePlan.entryZone.from} - {fxPair.tradePlan.entryZone.to}</span></div>
+                                            <div className="flex justify-between"><span className="text-gray-500">SL</span><span className="text-gray-200">{fxPair.tradePlan.stopLoss}</span></div>
+                                            <div className="flex justify-between"><span className="text-gray-500">TP</span><span className="text-gray-200">{fxPair.tradePlan.takeProfit}</span></div>
+                                            <div className="flex justify-between"><span className="text-gray-500">RR</span><span className="text-gray-200">{fxPair.tradePlan.riskReward}</span></div>
+                                            <div className="flex justify-between"><span className="text-gray-500">Window</span><span className="text-gray-200">{fxPair.tradePlan.executionWindow}</span></div>
+                                            <div className="flex justify-between"><span className="text-gray-500">Horizon</span><span className="text-gray-200">{fxPair.tradePlan.horizon}</span></div>
+                                        </div>
+                                    ) : null}
+                                </div>
+                            );
+                        })()}
                     </div>
                 </div>
 
@@ -1965,12 +2260,17 @@ const AssetDetailPanel = ({
 
             </CardContent>
             <div className="p-4 border-t border-gray-800 bg-gray-900">
+                {!executionEnabled && executionDisabledReason ? (
+                    <div className="mb-2 text-[11px] font-mono text-yellow-300/80 break-words">
+                        Execution blocked: {executionDisabledReason}
+                    </div>
+                ) : null}
                 <Button
                     data-testid="execute-signal"
                     className="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold"
-                    disabled={!isTradeable}
+                    disabled={executeDisabled}
                     onClick={() => {
-                        if (!isTradeable) return;
+                        if (!canAttempt) return;
                         onExecute(asset);
                         onClose();
                     }}
@@ -2029,6 +2329,11 @@ export const CommandView = () => {
 
     const [trackingSummary, setTrackingSummary] = useState<TrackingSummary | null>(null);
     const [perfStats, setPerfStats] = useState<PerformanceStats | null>(null);
+
+    const [riskTradingStatus, setRiskTradingStatus] = useState<'NORMAL' | 'REDUCED' | 'HALTED' | 'UNKNOWN'>('UNKNOWN');
+    const [riskTradingReason, setRiskTradingReason] = useState<string | null>(null);
+    const [manualKillSwitch, setManualKillSwitch] = useState(false);
+    const [executionNotice, setExecutionNotice] = useState<{ level: 'INFO' | 'WARNING' | 'CRITICAL'; message: string } | null>(null);
 
     // REGIME ENGINE STATE
     const [regime, setRegime] = useState<RegimeSnapshot | null>(null);
@@ -2124,6 +2429,67 @@ export const CommandView = () => {
                 .map(s => [s.symbol, s.setup!])
         );
     }, [microSetups]);
+
+    useEffect(() => {
+        if (typeof window === 'undefined') return;
+        try {
+            setManualKillSwitch(localStorage.getItem('gmpm_manual_kill_switch') === '1');
+        } catch {
+            setManualKillSwitch(false);
+        }
+    }, []);
+
+    const toggleManualKillSwitch = useCallback(() => {
+        setManualKillSwitch((prev) => {
+            const next = !prev;
+            try {
+                localStorage.setItem('gmpm_manual_kill_switch', next ? '1' : '0');
+            } catch {
+                // ignore
+            }
+            return next;
+        });
+    }, []);
+
+    useEffect(() => {
+        let alive = true;
+
+        const fetchRisk = async () => {
+            try {
+                const res = await fetch('/api/risk', { cache: 'no-store' });
+                const j = await res.json();
+                if (!alive) return;
+
+                const status = j?.report?.tradingStatus;
+                if (status === 'NORMAL' || status === 'REDUCED' || status === 'HALTED') {
+                    setRiskTradingStatus(status);
+                } else {
+                    setRiskTradingStatus('UNKNOWN');
+                }
+
+                const alerts = Array.isArray(j?.report?.alerts) ? j.report.alerts : [];
+                const critical = alerts.find((a: { level?: string; message?: string }) => a && a.level === 'CRITICAL' && typeof a.message === 'string');
+                setRiskTradingReason(critical?.message || null);
+            } catch {
+                if (!alive) return;
+                setRiskTradingStatus('UNKNOWN');
+                setRiskTradingReason('RISK_API_UNAVAILABLE');
+            }
+        };
+
+        void fetchRisk();
+        const interval = setInterval(fetchRisk, 60_000);
+        return () => {
+            alive = false;
+            clearInterval(interval);
+        };
+    }, []);
+
+    useEffect(() => {
+        if (!executionNotice) return;
+        const t = window.setTimeout(() => setExecutionNotice(null), 8000);
+        return () => window.clearTimeout(t);
+    }, [executionNotice]);
 
     // TOGGLE SELECTION
     const toggleSelection = (symbol: string, e: React.MouseEvent) => {
@@ -2258,6 +2624,7 @@ export const CommandView = () => {
                         }
                     });
                     updateSignalPricesFromPriceMap(priceMap);
+                    serverUpdatePrices(priceMap); // Mirror to server persistent store
                     setTrackingSummary(getTrackingSummary());
                     setPerfStats(calculateStats());
                 } catch {
@@ -2324,10 +2691,11 @@ export const CommandView = () => {
 
             let data: MarketSnapshotResponse;
             try {
-                data = (await fetchJsonWithTimeout('/api/market?limit=120&macro=0', 12_000)) as MarketSnapshotResponse;
+                // Fast initial load using CORE_SYMBOLS (32 assets) - no limit param uses defaults
+                data = (await fetchJsonWithTimeout('/api/market?macro=0', 30_000)) as MarketSnapshotResponse;
             } catch (e) {
-                console.warn('Market feed fetch timeout/error; falling back to smaller snapshot', e);
-                data = (await fetchJsonWithTimeout('/api/market?limit=60&macro=0', 12_000)) as MarketSnapshotResponse;
+                console.warn('Market feed fetch timeout/error; falling back to forex only', e);
+                data = (await fetchJsonWithTimeout('/api/market?class=forex&macro=0', 20_000)) as MarketSnapshotResponse;
             }
             const latency = Math.round(performance.now() - start);
 
@@ -2338,7 +2706,7 @@ export const CommandView = () => {
                     macroInFlightRef.current = true;
                     void (async () => {
                         try {
-                            const m = (await fetchJsonWithTimeout('/api/macro', 6_000)) as Record<string, unknown>;
+                            const m = (await fetchJsonWithTimeout('/api/macro', 30_000)) as Record<string, unknown>;
                             const macroPayload = (typeof m === 'object' && m !== null) ? (m as Record<string, unknown>) : {};
                             const macroValue = (typeof macroPayload.macro === 'object' && macroPayload.macro !== null) ? macroPayload.macro : null;
                             if (macroValue) setMacro(macroValue);
@@ -2354,13 +2722,14 @@ export const CommandView = () => {
                     fullUniverseInFlightRef.current = true;
                     void (async () => {
                         try {
-                            const full = (await fetchJsonWithTimeout('/api/market?macro=0', 45_000)) as MarketSnapshotResponse;
+                            // Load expanded universe (limit=80) in background - not all 278
+                            const full = (await fetchJsonWithTimeout('/api/market?limit=80&macro=0', 120_000)) as MarketSnapshotResponse;
                             if (full.success && Array.isArray(full.data) && full.data.length > (Array.isArray(data.data) ? data.data.length : 0)) {
                                 applySnapshot(full, latency);
                                 fullUniverseLoadedRef.current = true;
                             }
                         } catch {
-                            // ignore
+                            // ignore - core symbols already loaded
                         } finally {
                             fullUniverseInFlightRef.current = false;
                         }
@@ -2377,19 +2746,16 @@ export const CommandView = () => {
 }, []);
 
 const executeSignal = useCallback((asset: ScoredAsset) => {
-    if (feedDegraded || feedFallback) return;
-
     const classAllowed = tradeEnabledByClass
         ? Boolean(tradeEnabledByClass[asset.assetClass])
         : tradeEnabled;
 
-    if (!tradeEnabled || !classAllowed) return;
-    if (asset.signal === 'WAIT') return;
-    if (asset.quality?.status !== 'OK') return;
+    const id = safeUUID();
 
     const ms = microSetupBySymbol.get(asset.symbol);
     const entry = ms?.entry ?? asset.price;
-    const direction = ms?.direction ?? asset.signal;
+    const rawDirection = ms?.direction ?? asset.signal;
+    const direction: 'LONG' | 'SHORT' = rawDirection === 'WAIT' ? 'LONG' : rawDirection;
     const sl = ms?.stopLoss ?? (() => {
         const dailyRange = (asset.high && asset.low) ? (asset.high - asset.low) : (asset.price * 0.015);
         const dailyRangePercent = entry > 0 ? (dailyRange / entry) : 0.015;
@@ -2430,7 +2796,7 @@ const executeSignal = useCallback((asset: ScoredAsset) => {
     // EVALUATE GATES (Institutional Framework)
     let gatesResult: GateSummary | null = null;
     let gatesSummary: GateResultSummary[] = [];
-    let gatesAllPass = true;
+    let gatesAllPass = false;
 
     if (regime) {
         const tradeContext: TradeContext = {
@@ -2463,34 +2829,13 @@ const executeSignal = useCallback((asset: ScoredAsset) => {
         }
     }
 
-        const id = safeUUID();
+    const confN = Number(String(asset.conf).replace('%', ''));
+    const confidence = Number.isFinite(confN)
+        ? (confN >= 80 ? 'INSTITUTIONAL' : confN >= 65 ? 'STRONG' : 'MODERATE')
+        : 'MODERATE';
+    const validityHours = asset.assetClass === 'crypto' || asset.assetClass === 'forex' ? 6 : 24;
 
-        const confN = Number(String(asset.conf).replace('%', ''));
-        const confidence = Number.isFinite(confN)
-            ? (confN >= 80 ? 'INSTITUTIONAL' : confN >= 65 ? 'STRONG' : 'MODERATE')
-            : 'MODERATE';
-
-        trackSignal({
-            id,
-            asset: asset.displaySymbol,
-            assetClass: asset.assetClass,
-            direction,
-            price: entry,
-            stopLoss: sl,
-            takeProfits: [
-                { price: tp1, ratio: '1.5R' },
-                { price: tp2, ratio: '2.5R' },
-                { price: tp3, ratio: '4.0R' },
-            ],
-            score: asset.score,
-            components: asset.breakdown.components,
-            regime: asset.regime,
-            regimeType: regime?.regime,
-            gates: gatesSummary,
-            gatesAllPass,
-            validityHours: asset.assetClass === 'crypto' || asset.assetClass === 'forex' ? 6 : 24,
-        });
-
+    const recordCancelled = (reason: string) => {
         addSignal({
             id,
             symbol: asset.displaySymbol,
@@ -2506,21 +2851,164 @@ const executeSignal = useCallback((asset: ScoredAsset) => {
             takeProfit1: tp1,
             takeProfit2: tp2,
             timestamp: Date.now(),
-            validityHours: asset.assetClass === 'crypto' || asset.assetClass === 'forex' ? 6 : 24,
+            validityHours,
         });
-
+        updateSignalStatus(id, 'CANCELLED', undefined, reason);
+        setExecutionNotice({ level: 'CRITICAL', message: `Execution blocked: ${reason}` });
         try {
             setTrackingSummary(getTrackingSummary());
             setPerfStats(calculateStats());
         } catch {
             // ignore
         }
-    }, [feedDegraded, feedFallback, tradeEnabledByClass, tradeEnabled, regime, microSetupBySymbol]);
+    };
+
+    if (feedDegraded || feedFallback) {
+        recordCancelled('FEED_UNHEALTHY');
+        return;
+    }
+    if (manualKillSwitch) {
+        recordCancelled('MANUAL_KILL_SWITCH');
+        return;
+    }
+    if (riskTradingStatus === 'HALTED') {
+        recordCancelled(riskTradingReason ? `RISK_HALTED: ${riskTradingReason}` : 'RISK_HALTED');
+        return;
+    }
+    if (riskTradingStatus === 'UNKNOWN') {
+        recordCancelled('RISK_STATUS_UNAVAILABLE');
+        return;
+    }
+    if (!tradeEnabled || !classAllowed) {
+        const r = tradeDisabledReasonByClass?.[asset.assetClass] || tradeDisabledReason || 'TRADE_DISABLED';
+        recordCancelled(`TRADE_DISABLED: ${r}`);
+        return;
+    }
+    if (asset.signal === 'WAIT') {
+        recordCancelled('SIGNAL_WAIT');
+        return;
+    }
+    if (asset.quality?.status !== 'OK') {
+        recordCancelled(`DATA_QUALITY: ${asset.quality?.status || 'UNKNOWN'}`);
+        return;
+    }
+
+    const coherent = direction === 'LONG'
+        ? (sl < entry && tp1 > entry)
+        : (sl > entry && tp1 < entry);
+    if (!coherent) {
+        recordCancelled('INCOHERENT_TRADE_PLAN');
+        return;
+    }
+
+    const riskR = entry > 0 ? (Math.abs(entry - sl) / entry) * 100 : 999;
+    const portfolioGate = getPortfolioManager().canOpenPosition(riskR);
+    if (!portfolioGate.allowed) {
+        recordCancelled(portfolioGate.reason ? `PORTFOLIO_BLOCKED: ${portfolioGate.reason}` : 'PORTFOLIO_BLOCKED');
+        return;
+    }
+
+    if (!regime) {
+        recordCancelled('REGIME_UNAVAILABLE');
+        return;
+    }
+
+    if (!gatesAllPass) {
+        recordCancelled(gatesResult?.blockingReasons?.length
+            ? `GATES_BLOCKED: ${gatesResult.blockingReasons.join('; ')}`
+            : 'GATES_BLOCKED');
+        return;
+    }
+
+    trackSignal({
+        id,
+        asset: asset.displaySymbol,
+        assetClass: asset.assetClass,
+        direction,
+        price: entry,
+        stopLoss: sl,
+        takeProfits: [
+            { price: tp1, ratio: '1.5R' },
+            { price: tp2, ratio: '2.5R' },
+            { price: tp3, ratio: '4.0R' },
+        ],
+        score: asset.score,
+        components: asset.breakdown.components,
+        regime: asset.regime,
+        regimeType: regime?.regime,
+        gates: gatesSummary,
+        gatesAllPass,
+        validityHours,
+    });
+
+    // Mirror to server-side persistent store (non-blocking)
+    serverTrackSignal({
+        id,
+        asset: asset.displaySymbol,
+        assetClass: asset.assetClass,
+        direction,
+        entryPrice: entry,
+        stopLoss: sl,
+        takeProfits: [
+            { price: tp1, ratio: '1.5R' },
+            { price: tp2, ratio: '2.5R' },
+            { price: tp3, ratio: '4.0R' },
+        ],
+        score: asset.score,
+        components: asset.breakdown.components,
+        regime: asset.regime,
+        regimeType: regime?.regime,
+        gates: gatesSummary,
+        gatesAllPass,
+        validityHours,
+    });
+
+    addSignal({
+        id,
+        symbol: asset.displaySymbol,
+        direction,
+        score: asset.score,
+        confidence,
+        assetType: asset.assetClass,
+        sector: asset.sector,
+        signalPrice: entry,
+        entryLow: entry,
+        entryHigh: entry,
+        stopLoss: sl,
+        takeProfit1: tp1,
+        takeProfit2: tp2,
+        timestamp: Date.now(),
+        validityHours,
+    });
+
+    try {
+        setTrackingSummary(getTrackingSummary());
+        setPerfStats(calculateStats());
+    } catch {
+        // ignore
+    }
+}, [
+    feedDegraded,
+    feedFallback,
+    manualKillSwitch,
+    microSetupBySymbol,
+    regime,
+    riskTradingReason,
+    riskTradingStatus,
+    tradeDisabledReason,
+    tradeDisabledReasonByClass,
+    tradeEnabled,
+    tradeEnabledByClass,
+]);
 
     useEffect(() => {
         fetchData();
         const interval = setInterval(fetchData, 15000); // Poll every 15s for real-time
-        return () => clearInterval(interval);
+        // Trigger server-side monitor every 60s (checks SL/TP even if browser is backgrounded)
+        const monitorInterval = setInterval(() => triggerServerMonitor(false), 60000);
+        // Full scan for new Tier A/B opportunities every 5 minutes
+        const scanInterval = setInterval(() => triggerServerMonitor(true), 300000);
+        return () => { clearInterval(interval); clearInterval(monitorInterval); clearInterval(scanInterval); };
     }, [fetchData]);
 
     useEffect(() => {
@@ -2538,29 +3026,42 @@ const executeSignal = useCallback((asset: ScoredAsset) => {
         let alive = true;
         const fetchFullPipeline = async () => {
             try {
-                const fetchWithTimeout = async (url: string, timeoutMs: number) => {
+                const fetchWithTimeout = async (url: string, timeoutMs: number): Promise<Response | null> => {
                     const controller = new AbortController();
-                    const t = setTimeout(() => controller.abort(), timeoutMs);
+                    const t = setTimeout(() => controller.abort('timeout'), timeoutMs);
                     try {
                         return await fetch(url, { cache: 'no-store', signal: controller.signal });
+                    } catch (e) {
+                        if (e && typeof e === 'object' && 'name' in e && (e as { name?: unknown }).name === 'AbortError') {
+                            return null;
+                        }
+                        throw e;
                     } finally {
                         clearTimeout(t);
                     }
                 };
 
-                const regimeResP = fetchWithTimeout('/api/regime', 25_000);
-                const mesoResP = fetchWithTimeout('/api/meso', 45_000);
-                const microResP = fetchWithTimeout('/api/micro', 45_000);
+                // Increased timeouts significantly - APIs may be slow due to external dependencies
+                const regimeResP = fetchWithTimeout('/api/regime', 120_000); // 2 min
+                const mesoResP = fetchWithTimeout('/api/meso', 180_000);     // 3 min
+                const microResP = fetchWithTimeout('/api/micro', 300_000);   // 5 min
 
                 // REGIME: never block on meso/micro
                 try {
                     const regimeRes = await regimeResP;
-                    const regimeData = await regimeRes.json();
-                    if (alive && regimeData.success && regimeData.snapshot) {
-                        setRegime(regimeData.snapshot as RegimeSnapshot);
+                    if (regimeRes) {
+                        const regimeData = await regimeRes.json();
+                        if (alive && regimeData.success && regimeData.snapshot) {
+                            setRegime(regimeData.snapshot as RegimeSnapshot);
+                        }
                     }
                 } catch (e) {
-                    console.error('Regime fetch error', e);
+                    const isAbort = e && typeof e === 'object' && 'name' in e && (e as { name?: unknown }).name === 'AbortError';
+                    if (isAbort) {
+                        console.warn('Regime fetch timeout - will retry on next cycle');
+                    } else {
+                        console.error('Regime fetch error', e);
+                    }
                 } finally {
                     if (alive) setRegimeLoading(false);
                 }
@@ -2568,54 +3069,69 @@ const executeSignal = useCallback((asset: ScoredAsset) => {
                 // MESO
                 try {
                     const mesoRes = await mesoResP;
-                    const mesoDataRes = await mesoRes.json();
-                    if (alive && mesoDataRes.success) {
-                        setMesoData({
-                            weeklyThesis: mesoDataRes.temporalFocus?.weeklyThesis || '',
-                            dailyFocus: mesoDataRes.temporalFocus?.dailyFocus || [],
-                            favoredDirection: mesoDataRes.microInputs?.favoredDirection || 'NEUTRAL',
-                            volatilityContext: mesoDataRes.microInputs?.volatilityContext || 'NORMAL',
-                            allowedInstruments: mesoDataRes.microInputs?.allowedInstruments || [],
-                            prohibitedInstruments: mesoDataRes.microInputs?.prohibitedInstruments || [],
-                            marketBias: mesoDataRes.executiveSummary?.marketBias || 'NEUTRAL',
-                        });
+                    if (mesoRes) {
+                        const mesoDataRes = await mesoRes.json();
+                        if (alive && mesoDataRes.success) {
+                            setMesoData({
+                                weeklyThesis: mesoDataRes.temporalFocus?.weeklyThesis || '',
+                                dailyFocus: mesoDataRes.temporalFocus?.dailyFocus || [],
+                                favoredDirection: mesoDataRes.microInputs?.favoredDirection || 'NEUTRAL',
+                                volatilityContext: mesoDataRes.microInputs?.volatilityContext || 'NORMAL',
+                                allowedInstruments: mesoDataRes.microInputs?.allowedInstruments || [],
+                                prohibitedInstruments: mesoDataRes.microInputs?.prohibitedInstruments || [],
+                                marketBias: mesoDataRes.executiveSummary?.marketBias || 'NEUTRAL',
+                            });
+                        }
                     }
                 } catch (e) {
-                    console.error('Meso fetch error', e);
+                    const isAbort = e && typeof e === 'object' && 'name' in e && (e as { name?: unknown }).name === 'AbortError';
+                    if (isAbort) {
+                        console.warn('Meso fetch timeout - will retry on next cycle');
+                    } else {
+                        console.error('Meso fetch error', e);
+                    }
                 }
 
                 // MICRO
                 try {
                     const microRes = await microResP;
-                    const microDataRes = await microRes.json();
-                    if (alive && microDataRes.success && Array.isArray(microDataRes.analyses)) {
-                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                        const setups = microDataRes.analyses.map((a: any) => ({
-                            symbol: a.symbol,
-                            displaySymbol: a.displaySymbol,
-                            action: a.recommendation.action as 'EXECUTE' | 'WAIT' | 'AVOID',
-                            metrics: a.recommendation.metrics,
-                            setup: a.recommendation.bestSetup || (a.setups.length > 0 ? a.setups[0] : null),
-                        }));
-                        setMicroSetups(setups);
+                    if (microRes) {
+                        const microDataRes = await microRes.json();
+                        if (alive && microDataRes.success && Array.isArray(microDataRes.analyses)) {
+                            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                            const setups = microDataRes.analyses.map((a: any) => ({
+                                symbol: a.symbol,
+                                displaySymbol: a.displaySymbol,
+                                action: a.recommendation.action as 'EXECUTE' | 'WAIT' | 'AVOID',
+                                metrics: a.recommendation.metrics,
+                                setup: a.recommendation.bestSetup || (a.setups.length > 0 ? a.setups[0] : null),
+                            }));
+                            setMicroSetups(setups);
 
-                        // Store full analyses for expanded view (including scenarioAnalysis + liquidityAnalysis)
-                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                        const analyses = microDataRes.analyses.map((a: any) => ({
-                            symbol: a.symbol,
-                            displaySymbol: a.displaySymbol,
-                            price: a.price,
-                            technical: a.technical,
-                            scenarioAnalysis: a.scenarioAnalysis,
-                            liquidityAnalysis: a.liquidityAnalysis,
-                        }));
-                        setMicroAnalyses(analyses);
+                            // Store full analyses for expanded view (including scenarioAnalysis + liquidityAnalysis)
+                            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                            const analyses = microDataRes.analyses.map((a: any) => ({
+                                symbol: a.symbol,
+                                displaySymbol: a.displaySymbol,
+                                price: a.price,
+                                technical: a.technical,
+                                scenarioAnalysis: a.scenarioAnalysis,
+                                liquidityAnalysis: a.liquidityAnalysis,
+                            }));
+                            setMicroAnalyses(analyses);
+                        }
                     }
                 } catch (e) {
-                    console.error('Micro fetch error', e);
+                    if (e && typeof e === 'object' && 'name' in e && (e as { name?: unknown }).name === 'AbortError') {
+                        console.warn('Micro fetch timeout - API may be slow, will retry on next cycle');
+                    } else {
+                        console.error('Micro fetch error', e);
+                    }
                 }
             } catch (e) {
-                console.error('Pipeline fetch error', e);
+                if (!(e && typeof e === 'object' && 'name' in e && (e as { name?: unknown }).name === 'AbortError')) {
+                    console.error('Pipeline fetch error', e);
+                }
             } finally {
                 if (alive) setRegimeLoading(false);
             }
@@ -3037,6 +3553,97 @@ const executeSignal = useCallback((asset: ScoredAsset) => {
         ? (scannerRows.find(a => a.symbol === selectedScannerAsset) || assets.find(a => a.symbol === selectedScannerAsset) || null)
         : null;
 
+    const selectedExecution = useMemo(() => {
+        if (!selectedAssetData) return { enabled: false, reason: null as string | null };
+        if (feedDegraded || feedFallback) return { enabled: false, reason: 'FEED_UNHEALTHY' };
+        if (manualKillSwitch) return { enabled: false, reason: 'MANUAL_KILL_SWITCH' };
+        if (riskTradingStatus === 'HALTED') return { enabled: false, reason: riskTradingReason ? `RISK_HALTED: ${riskTradingReason}` : 'RISK_HALTED' };
+        if (riskTradingStatus === 'UNKNOWN') return { enabled: false, reason: 'RISK_STATUS_UNAVAILABLE' };
+        if (!tradeEnabled) return { enabled: false, reason: tradeDisabledReason || 'TRADE_DISABLED' };
+        const classAllowed = tradeEnabledByClass
+            ? Boolean(tradeEnabledByClass[selectedAssetData.assetClass])
+            : tradeEnabled;
+        if (!classAllowed) {
+            return { enabled: false, reason: tradeDisabledReasonByClass?.[selectedAssetData.assetClass] || 'CLASS_DISABLED' };
+        }
+
+        if (selectedAssetData.signal === 'WAIT') return { enabled: false, reason: 'SIGNAL_WAIT' };
+        if (selectedAssetData.quality?.status !== 'OK') return { enabled: false, reason: `DATA_QUALITY: ${selectedAssetData.quality?.status || 'UNKNOWN'}` };
+        if (!regime) return { enabled: false, reason: 'REGIME_UNAVAILABLE' };
+
+        const ms = microSetupBySymbol.get(selectedAssetData.symbol);
+        const entry = ms?.entry ?? selectedAssetData.price;
+        const direction = ms?.direction ?? selectedAssetData.signal;
+        const sl = ms?.stopLoss ?? (() => {
+            const dailyRange = (selectedAssetData.high && selectedAssetData.low) ? (selectedAssetData.high - selectedAssetData.low) : (selectedAssetData.price * 0.015);
+            const dailyRangePercent = entry > 0 ? (dailyRange / entry) : 0.015;
+            const safeDailyRangePercent = Number.isFinite(dailyRangePercent) ? dailyRangePercent : 0.015;
+            const atrPercent = Math.max(0.003, Math.min(0.02, safeDailyRangePercent));
+            const atr = entry * atrPercent;
+            const slMultiplier = selectedAssetData.score > 70 ? 0.55 : selectedAssetData.score > 55 ? 0.65 : 0.8;
+            return direction === 'LONG' ? entry - (atr * slMultiplier) : entry + (atr * slMultiplier);
+        })();
+        const tp1 = ms?.takeProfit1 ?? (() => {
+            const dailyRange = (selectedAssetData.high && selectedAssetData.low) ? (selectedAssetData.high - selectedAssetData.low) : (selectedAssetData.price * 0.015);
+            const dailyRangePercent = entry > 0 ? (dailyRange / entry) : 0.015;
+            const safeDailyRangePercent = Number.isFinite(dailyRangePercent) ? dailyRangePercent : 0.015;
+            const atrPercent = Math.max(0.003, Math.min(0.02, safeDailyRangePercent));
+            const atr = entry * atrPercent;
+            const tp1Multiplier = selectedAssetData.score > 70 ? 1.15 : selectedAssetData.score > 55 ? 1.0 : 0.85;
+            return direction === 'LONG' ? entry + (atr * tp1Multiplier) : entry - (atr * tp1Multiplier);
+        })();
+
+        const coherent = direction === 'LONG'
+            ? (sl < entry && tp1 > entry)
+            : (sl > entry && tp1 < entry);
+        if (!coherent) return { enabled: false, reason: 'INCOHERENT_TRADE_PLAN' };
+
+        const riskR = entry > 0 ? (Math.abs(entry - sl) / entry) * 100 : 999;
+        const portfolioGate = getPortfolioManager().canOpenPosition(riskR);
+        if (!portfolioGate.allowed) {
+            return { enabled: false, reason: portfolioGate.reason ? `PORTFOLIO_BLOCKED: ${portfolioGate.reason}` : 'PORTFOLIO_BLOCKED' };
+        }
+
+        const tradeContext: TradeContext = {
+            symbol: selectedAssetData.symbol,
+            direction,
+            assetClass: selectedAssetData.assetClass,
+            score: selectedAssetData.score,
+            signal: selectedAssetData.signal,
+            quality: selectedAssetData.quality,
+            liquidityScore: selectedAssetData.breakdown?.components?.liquidity,
+            entryPrice: entry,
+            stopPrice: sl,
+            targetPrice: tp1,
+            currentHour: new Date().getUTCHours(),
+        };
+
+        const gatesResult = evaluateGates(regime, tradeContext);
+        if (!gatesResult.allPass) {
+            return {
+                enabled: false,
+                reason: gatesResult.blockingReasons?.length
+                    ? `GATES_BLOCKED: ${gatesResult.blockingReasons.join('; ')}`
+                    : 'GATES_BLOCKED',
+            };
+        }
+
+        return { enabled: true, reason: null };
+    }, [
+        feedDegraded,
+        feedFallback,
+        manualKillSwitch,
+        microSetupBySymbol,
+        regime,
+        riskTradingReason,
+        riskTradingStatus,
+        selectedAssetData,
+        tradeDisabledReason,
+        tradeDisabledReasonByClass,
+        tradeEnabled,
+        tradeEnabledByClass,
+    ]);
+
     const instrumentTypeLabel = (symbol: string) => {
         if (symbol.endsWith('-USD')) return 'CRYPTO';
         if (symbol.endsWith('=X')) return 'FX';
@@ -3095,6 +3702,44 @@ const executeSignal = useCallback((asset: ScoredAsset) => {
 
     return (
         <div className="space-y-4 max-w-[1920px] mx-auto relative min-h-[800px]">
+
+            {executionNotice && (
+                <Card className={cn(
+                    "border",
+                    executionNotice.level === 'CRITICAL' ? 'bg-red-950/20 border-red-900/40' :
+                        executionNotice.level === 'WARNING' ? 'bg-yellow-950/20 border-yellow-900/40' :
+                            'bg-gray-900 border-gray-800'
+                )}>
+                    <CardContent className="p-3 text-sm text-gray-200">
+                        <div className="font-mono text-[12px] break-words">{executionNotice.message}</div>
+                    </CardContent>
+                </Card>
+            )}
+
+            <Card className="bg-gray-900 border border-gray-800">
+                <CardContent className="p-4 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+                    <div className="text-xs font-bold text-gray-400 uppercase tracking-wider">Execution controls</div>
+                    <div className="flex flex-col md:flex-row md:items-center gap-3">
+                        <div className={cn(
+                            "text-[10px] font-mono px-2 py-1 rounded border",
+                            riskTradingStatus === 'HALTED' ? 'bg-red-950/20 text-red-300 border-red-900/40' :
+                                riskTradingStatus === 'REDUCED' ? 'bg-yellow-950/20 text-yellow-300 border-yellow-900/40' :
+                                    riskTradingStatus === 'NORMAL' ? 'bg-green-950/20 text-green-300 border-green-900/40' :
+                                        'bg-gray-950/30 text-gray-300 border-gray-800'
+                        )}>
+                            risk={riskTradingStatus}{riskTradingReason ? ` reason=${riskTradingReason}` : ''}
+                        </div>
+                        <Button
+                            variant={manualKillSwitch ? 'destructive' : 'secondary'}
+                            size="sm"
+                            onClick={toggleManualKillSwitch}
+                            className="h-7 text-[10px] font-bold"
+                        >
+                            {manualKillSwitch ? 'KILL-SWITCH ON' : 'KILL-SWITCH OFF'}
+                        </Button>
+                    </div>
+                </CardContent>
+            </Card>
 
             {((!feedHealthy) || !tradeEnabled) && (
                 <Card className="bg-yellow-950/20 border border-yellow-900/40">
@@ -3169,6 +3814,19 @@ const executeSignal = useCallback((asset: ScoredAsset) => {
             {/* 2. MARKET CONTEXT (Real Evidence) */}
             <MarketContextPanel macro={macro} assets={assets} />
 
+            <CurrencyStrengthPanel assets={assets} macro={macro} />
+
+            {/* 3. DECISION ENGINE TIER SCANNER (Unified Confluence) */}
+            <TierScanner
+                onSelectAsset={setSelectedScannerAsset}
+                onExecute={(decision: ActionDecision) => {
+                    const assetData = assets.find(a => a.symbol === decision.asset);
+                    if (assetData) {
+                        setSelectedScannerAsset(decision.displaySymbol);
+                    }
+                }}
+                className="mb-4"
+            />
 
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 h-[calc(100vh-240px)] min-h-[500px]">
 
@@ -3782,6 +4440,8 @@ const executeSignal = useCallback((asset: ScoredAsset) => {
                             asset={selectedAssetData}
                             onClose={() => setSelectedScannerAsset(null)}
                             onExecute={executeSignal}
+                            executionEnabled={selectedExecution.enabled}
+                            executionDisabledReason={selectedExecution.reason}
                         />
                     </div>
                 )}

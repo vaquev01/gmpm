@@ -252,6 +252,7 @@ export async function GET() {
             summary: {
                 gdp: {
                     value: gdpValue,
+                    gdpYoY,
                     trend: gdpTrend,
                     lastUpdate: data.GDPC1?.date || '',
                 },
