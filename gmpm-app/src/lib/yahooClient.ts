@@ -15,6 +15,7 @@ type YahooJsonResult = {
 const cache = new Map<string, CacheEntry>();
 const lastOk = new Map<string, CacheEntry>();
 const inFlight = new Map<string, Promise<YahooJsonResult>>();
+const ERROR_CACHE_MS = 10_000; // Cache errors for only 10s so retries recover fast
 
 const maxConcurrency = Math.max(1, Number(process.env.YAHOO_MAX_CONCURRENCY || 20));
 let active = 0;
@@ -111,7 +112,7 @@ export async function yahooFetchJson(url: string, ttlMs: number, timeoutMs: numb
             return { ok: true, status: 200, data: okCached.data, cached: true, stale: true };
           }
 
-          cache.set(url, { ts: now, status, data: null });
+          cache.set(url, { ts: now - ttlMs + ERROR_CACHE_MS, status, data: null });
           return { ok: false, status, data: null, cached: false, stale: false };
         }
 
@@ -129,6 +130,7 @@ export async function yahooFetchJson(url: string, ttlMs: number, timeoutMs: numb
         cache.set(url, { ts: now, status: okCached.status, data: okCached.data });
         return { ok: true, status: 200, data: okCached.data, cached: true, stale: true };
       }
+      cache.set(url, { ts: now - ttlMs + ERROR_CACHE_MS, status: 0, data: null });
       return { ok: false, status: 0, data: null, cached: false, stale: false };
     } finally {
       if (acquired) release();
