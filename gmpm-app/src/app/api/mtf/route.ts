@@ -73,7 +73,7 @@ type MtfCacheEntry = {
 };
 
 const mtfCache = new Map<string, MtfCacheEntry>();
-const MTF_CACHE_TTL_MS = 30_000;
+const MTF_CACHE_TTL_MS = 120_000; // 2 min — aligned with market/macro cache cycle
 
 // Aggregate 1h candles to 4h
 function aggregateTo4H(candles: CandleData[]): CandleData[] {

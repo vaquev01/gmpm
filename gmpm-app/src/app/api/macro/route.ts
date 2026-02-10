@@ -29,8 +29,8 @@ type MacroCacheEntry = {
 
 const macroCache = new Map<string, MacroCacheEntry>();
 const macroCacheInFlight = new Map<string, Promise<{ status: number; payload: unknown; cacheable: boolean }>>();
-const MACRO_CACHE_TTL_MS = 60_000;
-const MACRO_CACHE_STALE_MS = 5 * 60_000;
+const MACRO_CACHE_TTL_MS = 120_000;      // 2 min fresh
+const MACRO_CACHE_STALE_MS = 15 * 60_000; // 15 min stale-while-revalidate
 
 let lastGoodSnapshot: { payload: unknown; timestamp: string } | null = null;
 
