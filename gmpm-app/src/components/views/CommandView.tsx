@@ -2827,8 +2827,8 @@ export const CommandView = () => {
                     fullUniverseInFlightRef.current = true;
                     void (async () => {
                         try {
-                            // Load FULL universe (all 278 assets) in background
-                            const full = (await fetchJsonWithTimeout('/api/market?limit=300&macro=0', 180_000)) as MarketSnapshotResponse;
+                            // Load expanded universe (100 assets) in background — balances coverage vs speed
+                            const full = (await fetchJsonWithTimeout('/api/market?limit=100&macro=0', 120_000)) as MarketSnapshotResponse;
                             if (full.success && Array.isArray(full.data) && full.data.length > (Array.isArray(data.data) ? data.data.length : 0)) {
                                 applySnapshot(full, latency);
                                 fullUniverseLoadedRef.current = true;
@@ -3108,7 +3108,7 @@ const executeSignal = useCallback((asset: ScoredAsset) => {
 
     useEffect(() => {
         fetchData();
-        const interval = setInterval(fetchData, 15000); // Poll every 15s for real-time
+        const interval = setInterval(fetchData, 60_000); // Poll every 60s (cache=2min, avoids thundering herd)
         // Trigger server-side monitor every 60s (checks SL/TP even if browser is backgrounded)
         const monitorInterval = setInterval(() => triggerServerMonitor(false), 60000);
         // Full scan for new Tier A/B opportunities every 5 minutes
@@ -3127,9 +3127,12 @@ const executeSignal = useCallback((asset: ScoredAsset) => {
     }, []);
 
     // FETCH REGIME + MESO + MICRO (Full Pipeline)
+    const pipelineInFlightRef = useRef(false);
     useEffect(() => {
         let alive = true;
         const fetchFullPipeline = async () => {
+            if (pipelineInFlightRef.current) return; // Prevent concurrent pipeline fetches
+            pipelineInFlightRef.current = true;
             try {
                 const fetchWithTimeout = async (url: string, timeoutMs: number): Promise<Response | null> => {
                     const controller = new AbortController();
@@ -3239,10 +3242,11 @@ const executeSignal = useCallback((asset: ScoredAsset) => {
                 }
             } finally {
                 if (alive) setRegimeLoading(false);
+                pipelineInFlightRef.current = false;
             }
         };
         fetchFullPipeline();
-        const interval = setInterval(fetchFullPipeline, 30000); // Sync every 30s
+        const interval = setInterval(fetchFullPipeline, 120_000); // Sync every 2min (cache-aligned, avoids pile-up)
         return () => { alive = false; clearInterval(interval); };
     }, []);
 

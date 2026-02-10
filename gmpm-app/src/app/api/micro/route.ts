@@ -480,18 +480,24 @@ function calculateSmartLevels(
     return { stopLoss, tp1, tp2, tp3, levelSources };
 }
 
-// Fetch meso inputs with full context
-async function fetchMesoInputs(): Promise<{ 
+// Fetch meso inputs with full context (cached 3 min to avoid cascade)
+type MesoInputsResult = { 
     instruments: MesoInput[]; 
     prohibited: string[];
     context: { favoredDirection: string; volatilityContext: string; regime: string; bias: string; classAnalysis?: Record<string, { expectation: string; confidence: string; liquidityScore: number }> };
-}> {
+};
+let _mesoInputsCache: { ts: number; data: MesoInputsResult } | null = null;
+const MESO_INPUTS_TTL = 3 * 60_000;
+
+async function fetchMesoInputs(): Promise<MesoInputsResult> {
+    if (_mesoInputsCache && (Date.now() - _mesoInputsCache.ts) < MESO_INPUTS_TTL) return _mesoInputsCache.data;
+    const fallback: MesoInputsResult = _mesoInputsCache?.data || { instruments: [], prohibited: [], context: { favoredDirection: 'NEUTRAL', volatilityContext: 'NORMAL', regime: 'NEUTRAL', bias: 'NEUTRAL', classAnalysis: {} } };
     try {
         const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000';
         const res = await fetch(`${baseUrl}/api/meso`, { cache: 'no-store' });
         const data = await res.json();
         if (data.success) {
-            return {
+            const result: MesoInputsResult = {
                 instruments: data.microInputs?.allowedInstruments || [],
                 prohibited: data.microInputs?.prohibitedInstruments?.map((p: { symbol: string }) => p.symbol) || [],
                 context: {
@@ -505,11 +511,13 @@ async function fetchMesoInputs(): Promise<{
                     }, {}) || {},
                 }
             };
+            _mesoInputsCache = { ts: Date.now(), data: result };
+            return result;
         }
     } catch (e) {
         serverLog('warn', 'micro_meso_inputs_fetch_failed', { error: String(e) }, 'api/micro');
     }
-    return { instruments: [], prohibited: [], context: { favoredDirection: 'NEUTRAL', volatilityContext: 'NORMAL', regime: 'NEUTRAL', bias: 'NEUTRAL', classAnalysis: {} } };
+    return fallback;
 }
 
 // Fetch market data for symbols in batches to avoid URL length limits

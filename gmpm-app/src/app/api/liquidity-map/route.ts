@@ -645,22 +645,28 @@ async function fetchCOTData(symbol: string): Promise<LiquidityMapData['cotData']
     }
 }
 
-// Fetch MESO allowed instruments
+// Fetch MESO allowed instruments (cached 5 min to avoid cascade per-symbol)
+let _mesoCache: { ts: number; data: { symbol: string; class: string }[] } | null = null;
+const MESO_CACHE_TTL = 5 * 60_000;
+
 async function fetchMesoInstruments(): Promise<{ symbol: string; class: string }[]> {
+    if (_mesoCache && (Date.now() - _mesoCache.ts) < MESO_CACHE_TTL) return _mesoCache.data;
     try {
         const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000';
         const res = await fetch(`${baseUrl}/api/meso`, { cache: 'no-store' });
-        if (!res.ok) return [];
+        if (!res.ok) return _mesoCache?.data || [];
         
         const data = await res.json();
-        if (!data.success || !data.microInputs?.allowedInstruments) return [];
+        if (!data.success || !data.microInputs?.allowedInstruments) return _mesoCache?.data || [];
         
-        return data.microInputs.allowedInstruments.map((i: { symbol: string; class: string }) => ({
+        const instruments = data.microInputs.allowedInstruments.map((i: { symbol: string; class: string }) => ({
             symbol: i.symbol,
             class: i.class.toLowerCase()
         }));
+        _mesoCache = { ts: Date.now(), data: instruments };
+        return instruments;
     } catch {
-        return [];
+        return _mesoCache?.data || [];
     }
 }
 
@@ -683,6 +689,7 @@ function calculateLiquidityTolerance(
     equalLevels: EqualLevel[],
     _atr: number // Prefixed with _ to indicate intentionally unused but kept for future use
 ): LiquidityToleranceProfile {
+    void _atr;
     if (candles.length < 50 || equalLevels.length === 0) {
         return {
             toleranceScore: 50,

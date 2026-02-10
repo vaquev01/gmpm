@@ -3,6 +3,11 @@ import type { RegimeSnapshot } from '@/lib/regimeEngine';
 
 const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000';
 
+// Response-level cache (2 min) — meso is called by micro, liquidity-map, CommandView
+const _mesoCache = new Map<string, { ts: number; payload: Record<string, unknown> }>();
+let _mesoInFlight: Promise<Response> | null = null;
+const MESO_RESPONSE_TTL = 2 * 60_000;
+
 // Fetch regime snapshot from our own API
 async function fetchRegimeSnapshot(): Promise<RegimeSnapshot | null> {
     try {
@@ -39,7 +44,7 @@ interface MacroData {
 async function fetchMarketData(): Promise<{ assets: MarketAsset[], macro: MacroData }> {
     try {
         const [marketRes, macroRes] = await Promise.all([
-            fetch(`${baseUrl}/api/market?limit=150&macro=0`, { cache: 'no-store' }),
+            fetch(`${baseUrl}/api/market?macro=0`, { cache: 'no-store' }),
             fetch(`${baseUrl}/api/macro`, { cache: 'no-store' }),
         ]);
 
@@ -732,6 +737,18 @@ function calculateClassPerformance(
 }
 
 export async function GET() {
+    // Return cached response if fresh
+    const cached = _mesoCache.get('meso');
+    if (cached && (Date.now() - cached.ts) < MESO_RESPONSE_TTL) {
+        return NextResponse.json({ ...cached.payload, cached: true });
+    }
+    // Dedup concurrent requests
+    if (_mesoInFlight) return _mesoInFlight;
+    _mesoInFlight = buildMesoResponse();
+    try { return await _mesoInFlight; } finally { _mesoInFlight = null; }
+}
+
+async function buildMesoResponse(): Promise<Response> {
     try {
         // Fetch regime snapshot AND market data in parallel
         const [regime, marketData] = await Promise.all([
@@ -962,7 +979,7 @@ export async function GET() {
         // Sort by conviction score (no limit - include all allowed)
         allowedInstruments.sort((a, b) => b.score - a.score);
 
-        return NextResponse.json({
+        const payload: Record<string, unknown> = {
             success: true,
             timestamp: new Date().toISOString(),
             executiveSummary,
@@ -1006,7 +1023,10 @@ export async function GET() {
                 dollarIndex: macro.dollarIndex,
                 fearGreed: macro.fearGreed,
             },
-        });
+        };
+
+        _mesoCache.set('meso', { ts: Date.now(), payload });
+        return NextResponse.json(payload);
     } catch (error) {
         console.error('Meso API error:', error);
         return NextResponse.json({

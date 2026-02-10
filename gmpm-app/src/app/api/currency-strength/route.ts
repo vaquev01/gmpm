@@ -465,7 +465,7 @@ export async function GET() {
     try {
         // Fetch market data for forex pairs
         const [marketRes, macroRes] = await Promise.all([
-            fetch(`${baseUrl}/api/market?limit=150`, { cache: 'no-store' }),
+            fetch(`${baseUrl}/api/market?category=forex&macro=0`, { cache: 'no-store' }),
             fetch(`${baseUrl}/api/macro`, { cache: 'no-store' }),
         ]);
 

@@ -25,8 +25,8 @@ type MarketCacheEntry = {
 
 const marketCache = new Map<string, MarketCacheEntry>();
 const marketCacheInFlight = new Map<string, Promise<{ status: number; payload: unknown; cacheable: boolean }>>();
-const MARKET_CACHE_TTL_MS = 60_000;
-const MARKET_CACHE_STALE_MS = 5 * 60_000;
+const MARKET_CACHE_TTL_MS = 120_000;      // 2 min fresh cache
+const MARKET_CACHE_STALE_MS = 15 * 60_000; // 15 min stale-while-revalidate
 
 function summarizeQuality(quotes: QuoteData[]) {
     const summary = quotes.reduce(
@@ -316,7 +316,7 @@ async function fetchYahooQuote(symbol: string): Promise<QuoteData | null> {
     try {
         const url = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1d&range=30d`;
 
-        const y = await yahooFetchJson(url, 60_000, 7000);
+        const y = await yahooFetchJson(url, 180_000, 7000);
         if (!y.ok || !y.data) return null;
 
         const data = y.data as YahooChartResponse;
